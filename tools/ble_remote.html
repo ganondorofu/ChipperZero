@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<title>ChipperZero BLE Remote</title>
+<style>
+  :root {
+    --bg: #15171c;
+    --panel: #1f232b;
+    --accent: #ff8a00;
+    --accent2: #ffb347;
+    --text: #e8e8e8;
+    --muted: #8a8f99;
+    --ok: #36c46b;
+    --err: #e35f5f;
+    --oled-on:  #ffb347;
+    --oled-off: #1a1d22;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: "Segoe UI", system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    display: flex;
+    justify-content: center;
+    padding: 24px;
+  }
+  .app {
+    width: 100%;
+    max-width: 460px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  h1 { font-size: 18px; margin: 0; letter-spacing: 1px; }
+  .dot {
+    display: inline-block;
+    width: 10px; height: 10px;
+    border-radius: 50%;
+    background: var(--err);
+    margin-right: 6px;
+    vertical-align: middle;
+  }
+  .dot.ok { background: var(--ok); }
+  .panel {
+    background: var(--panel);
+    border-radius: 10px;
+    padding: 16px;
+  }
+  button {
+    cursor: pointer;
+    border: none;
+    border-radius: 8px;
+    color: #111;
+    font-weight: 600;
+    background: var(--accent);
+    padding: 14px 16px;
+    font-size: 15px;
+    transition: filter 0.1s, transform 0.05s;
+  }
+  button:hover { filter: brightness(1.1); }
+  button:active { transform: scale(0.96); }
+  button:disabled { background: #3a3f4a; color: #6c727f; cursor: not-allowed; }
+  .row { display: flex; gap: 8px; }
+  .row > button { flex: 1; }
+
+  /* OLED canvas: 128x64 scaled 3x = 384x192. */
+  .oled-wrap {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    background: #0d0f13;
+    border-radius: 8px;
+    padding: 12px;
+    border: 1px solid #2a2e36;
+  }
+  canvas#oled {
+    width: 384px;
+    height: 192px;
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+    background: var(--oled-off);
+    border-radius: 4px;
+  }
+  .oled-meta {
+    font-size: 11px;
+    color: var(--muted);
+    margin-top: 6px;
+    text-align: center;
+  }
+
+  .pad {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    grid-template-rows: 64px 64px;
+    gap: 8px;
+  }
+  .pad .left  { grid-column: 1; grid-row: 1; }
+  .pad .ok    { grid-column: 2; grid-row: 1; background: var(--accent2); }
+  .pad .right { grid-column: 3; grid-row: 1; }
+  .pad .back  { grid-column: 1 / span 3; grid-row: 2; background: #4a4f5a; color: #fff; }
+
+  .log {
+    height: 220px;
+    overflow-y: auto;
+    background: #0d0f13;
+    border-radius: 8px;
+    padding: 8px 10px;
+    font-family: Consolas, monospace;
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--muted);
+    white-space: pre-wrap;
+  }
+  .log .tx { color: var(--accent2); }
+  .log .rx { color: #6cb1ff; }
+  .log .err { color: var(--err); }
+  .log .ok { color: var(--ok); }
+  .hint { font-size: 12px; color: var(--muted); }
+  kbd {
+    background: #2c313b;
+    border-radius: 4px;
+    padding: 1px 6px;
+    font-family: Consolas, monospace;
+    font-size: 11px;
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <h1>ChipperZero Remote</h1>
+    <span><span id="dot" class="dot"></span><span id="state">未接続</span></span>
+  </header>
+
+  <div class="panel">
+    <div class="row">
+      <button id="btn-connect">接続</button>
+      <button id="btn-disconnect" disabled>切断</button>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="oled-wrap">
+      <canvas id="oled" width="128" height="64"></canvas>
+    </div>
+    <div class="oled-meta"><span id="fps">--</span> · <span id="frames">0</span> frames</div>
+  </div>
+
+  <div class="panel">
+    <div class="pad">
+      <button class="left"  data-op="1">◀ LEFT</button>
+      <button class="ok"    data-op="3">● OK</button>
+      <button class="right" data-op="2">▶ RIGHT</button>
+      <button class="back"  data-op="4">◀◀ BACK</button>
+    </div>
+    <div class="hint" style="margin-top:10px;">
+      キーボード: <kbd>←</kbd><kbd>→</kbd>移動 / <kbd>Enter</kbd>OK / <kbd>Esc</kbd>BACK<br/>
+      実機ではエンコーダ回転 = LEFT / RIGHT、押し込み = OK、長押し = BACK。
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="hint" style="margin-bottom:6px;">ログ</div>
+    <div id="log" class="log"></div>
+  </div>
+</div>
+
+<script>
+const SERVICE_UUID = 'c4b1e000-7a66-4c12-9c69-d2f8c4a3f100';
+const CMD_UUID     = 'c4b1e001-7a66-4c12-9c69-d2f8c4a3f100';
+const STATUS_UUID  = 'c4b1e002-7a66-4c12-9c69-d2f8c4a3f100';
+const FB_UUID      = 'c4b1e003-7a66-4c12-9c69-d2f8c4a3f100';
+const LOG_UUID     = 'c4b1e004-7a66-4c12-9c69-d2f8c4a3f100';
+
+const OP_NAMES = { 1: 'LEFT', 2: 'RIGHT', 3: 'OK', 4: 'BACK' };
+
+const FB_LEN = 1024;            // 128*64/8
+const FB_CHUNK = 240;           // matches firmware
+
+let device = null;
+let cmdChar = null;
+let statusChar = null;
+let fbChar = null;
+let logChar = null;
+const fbBuf = new Uint8Array(FB_LEN);
+let lastFrameAt = 0;
+let frameCount = 0;
+let lastFpsCalcAt = 0;
+let lastFpsFrames = 0;
+
+const $ = (id) => document.getElementById(id);
+const logEl = $('log');
+const canvas = $('oled');
+const ctx = canvas.getContext('2d');
+ctx.fillStyle = '#1a1d22';
+ctx.fillRect(0, 0, 128, 64);
+
+function log(msg, cls = '') {
+  const time = new Date().toLocaleTimeString();
+  const line = document.createElement('div');
+  if (cls) line.className = cls;
+  line.textContent = `[${time}] ${msg}`;
+  logEl.appendChild(line);
+  logEl.scrollTop = logEl.scrollHeight;
+  while (logEl.childNodes.length > 200) logEl.removeChild(logEl.firstChild);
+}
+
+function setConnected(connected) {
+  $('dot').classList.toggle('ok', connected);
+  $('state').textContent = connected ? '接続中' : '未接続';
+  $('btn-connect').disabled = connected;
+  $('btn-disconnect').disabled = !connected;
+  document.querySelectorAll('.pad button').forEach(b => b.disabled = !connected);
+}
+
+async function connect() {
+  if (!navigator.bluetooth) {
+    log('Web Bluetooth が利用できません。Chrome / Edge を使ってください。', 'err');
+    return;
+  }
+  try {
+    log('デバイスを検索中...');
+    device = await navigator.bluetooth.requestDevice({
+      filters: [{ services: [SERVICE_UUID] }],
+      optionalServices: [SERVICE_UUID],
+    });
+    log(`選択: ${device.name || '(no name)'}`);
+    device.addEventListener('gattserverdisconnected', onDisconnected);
+
+    log('GATT 接続中...');
+    const server = await device.gatt.connect();
+    const service = await server.getPrimaryService(SERVICE_UUID);
+    cmdChar = await service.getCharacteristic(CMD_UUID);
+    try {
+      statusChar = await service.getCharacteristic(STATUS_UUID);
+      await statusChar.startNotifications();
+      statusChar.addEventListener('characteristicvaluechanged', onStatus);
+    } catch (e) {
+      log(`Status char 取得失敗: ${e.message}`, 'err');
+    }
+    try {
+      fbChar = await service.getCharacteristic(FB_UUID);
+      await fbChar.startNotifications();
+      fbChar.addEventListener('characteristicvaluechanged', onFrameChunk);
+      log('Framebuffer notify subscribed', 'ok');
+    } catch (e) {
+      log(`Framebuffer char 取得失敗: ${e.message}`, 'err');
+    }
+    try {
+      logChar = await service.getCharacteristic(LOG_UUID);
+      await logChar.startNotifications();
+      logChar.addEventListener('characteristicvaluechanged', onDeviceLog);
+      log('Device log subscribed ✓', 'ok');
+    } catch (e) {
+      log(`Log char 取得失敗: ${e.message}`, 'err');
+    }
+    setConnected(true);
+    log('接続完了', 'ok');
+  } catch (e) {
+    log(`接続エラー: ${e.message}`, 'err');
+    setConnected(false);
+  }
+}
+
+function disconnect() {
+  if (device && device.gatt.connected) device.gatt.disconnect();
+}
+
+function onDisconnected() {
+  log('切断されました', 'err');
+  cmdChar = null;
+  statusChar = null;
+  fbChar = null;
+  logChar = null;
+  setConnected(false);
+}
+
+function onStatus(ev) {
+  const v = ev.target.value;
+  const bytes = Array.from(new Uint8Array(v.buffer))
+    .map(b => b.toString(16).padStart(2, '0')).join(' ');
+  log(`RX status: ${bytes}`, 'rx');
+}
+
+function onDeviceLog(ev) {
+  const text = new TextDecoder().decode(ev.target.value.buffer).replace(/\n$/, '');
+  if (!text) return;
+  const line = document.createElement('div');
+  line.className = 'rx';
+  line.textContent = `[device] ${text}`;
+  logEl.appendChild(line);
+  logEl.scrollTop = logEl.scrollHeight;
+  while (logEl.childNodes.length > 300) logEl.removeChild(logEl.firstChild);
+}
+
+function onFrameChunk(ev) {
+  const v = ev.target.value;
+  const arr = new Uint8Array(v.buffer);
+  if (arr.length < 1) return;
+  const idx = arr[0];
+  const data = arr.subarray(1);
+  const off = idx * FB_CHUNK;
+  if (off + data.length > FB_LEN) return;
+  fbBuf.set(data, off);
+  // Last chunk: redraw.
+  if (off + data.length >= FB_LEN) {
+    drawFrame();
+    frameCount++;
+    $('frames').textContent = frameCount;
+    const now = performance.now();
+    if (now - lastFpsCalcAt >= 1000) {
+      const fps = (frameCount - lastFpsFrames) * 1000 / (now - lastFpsCalcAt);
+      $('fps').textContent = fps.toFixed(1) + ' fps';
+      lastFpsCalcAt = now;
+      lastFpsFrames = frameCount;
+    }
+  }
+}
+
+function drawFrame() {
+  const img = ctx.createImageData(128, 64);
+  // SH1106 / SSD1306 page format: 8 pages of 128 columns; each byte holds
+  // 8 vertical pixels (LSB = top).
+  for (let page = 0; page < 8; page++) {
+    for (let col = 0; col < 128; col++) {
+      const byte = fbBuf[page * 128 + col];
+      for (let bit = 0; bit < 8; bit++) {
+        const on = (byte >> bit) & 1;
+        const x = col;
+        const y = page * 8 + bit;
+        const o = (y * 128 + x) * 4;
+        if (on) {
+          img.data[o]   = 0xff;
+          img.data[o+1] = 0xb3;
+          img.data[o+2] = 0x47;
+        } else {
+          img.data[o]   = 0x1a;
+          img.data[o+1] = 0x1d;
+          img.data[o+2] = 0x22;
+        }
+        img.data[o+3] = 0xff;
+      }
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+}
+
+async function sendOp(op) {
+  if (!cmdChar) return;
+  try {
+    const data = new Uint8Array([op]);
+    if (cmdChar.writeValueWithoutResponse) {
+      await cmdChar.writeValueWithoutResponse(data);
+    } else {
+      await cmdChar.writeValue(data);
+    }
+    log(`TX ${OP_NAMES[op]} (0x0${op})`, 'tx');
+  } catch (e) {
+    log(`送信エラー: ${e.message}`, 'err');
+  }
+}
+
+$('btn-connect').addEventListener('click', connect);
+$('btn-disconnect').addEventListener('click', disconnect);
+document.querySelectorAll('.pad button').forEach(btn => {
+  btn.addEventListener('click', () => sendOp(parseInt(btn.dataset.op, 10)));
+});
+
+window.addEventListener('keydown', (e) => {
+  if (!cmdChar) return;
+  const map = {
+    'ArrowLeft':  1,
+    'ArrowRight': 2,
+    'ArrowUp':    1,  // alias
+    'ArrowDown':  2,  // alias
+    'Enter':      3,
+    'Escape':     4,
+  };
+  const op = map[e.key];
+  if (op !== undefined) {
+    e.preventDefault();
+    sendOp(op);
+  }
+});
+
+setConnected(false);
+log('Ready. 「接続」ボタンを押すとデバイス選択ダイアログが出ます。');
+</script>
+</body>
+</html>
