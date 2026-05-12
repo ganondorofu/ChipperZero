@@ -19,8 +19,8 @@ constexpr int PIN_I2C_SDA   = 21;
 constexpr int PIN_I2C_SCL   = 17;  // GPIO17 (repurposed from spare button)
 
 // --- Rotary encoder (internal pullups OK on 32/33) ---
-constexpr int PIN_ENC_A     = 32;
-constexpr int PIN_ENC_B     = 33;
+constexpr int PIN_ENC_A     = 33;
+constexpr int PIN_ENC_B     = 32;
 
 // --- Buttons. INPUT_PULLUP; no external resistors needed. ---
 constexpr int PIN_BTN_OK    = 14;
