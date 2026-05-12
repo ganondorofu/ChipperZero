@@ -91,9 +91,8 @@ InputEvent pollButtons() {
 void begin() {
     pinMode(PIN_ENC_A, INPUT_PULLUP);
     pinMode(PIN_ENC_B, INPUT_PULLUP);
-    pinMode(PIN_BTN_OK,    INPUT_PULLUP);
-    pinMode(PIN_BTN_BACK,  INPUT_PULLUP);
-    pinMode(PIN_BTN_EXTRA, INPUT_PULLUP);
+    pinMode(PIN_BTN_OK,   INPUT_PULLUP);
+    pinMode(PIN_BTN_BACK, INPUT_PULLUP);
     g_lastEncState = readEncState();
     if (!g_injectQueue) {
         g_injectQueue = xQueueCreate(kQueueLen, sizeof(InputEvent));

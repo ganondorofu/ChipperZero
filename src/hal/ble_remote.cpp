@@ -33,9 +33,10 @@ NimBLEServer*         g_server     = nullptr;
 NimBLECharacteristic* g_statusChar = nullptr;
 NimBLECharacteristic* g_fbChar     = nullptr;
 NimBLECharacteristic* g_logChar    = nullptr;
-bool g_initialised = false;
-bool g_enabled     = false;
-bool g_connected   = false;
+bool g_initialised      = false;
+bool g_enabled          = false;
+bool g_connected        = false;
+bool g_newConnection    = false;
 
 encoder::InputEvent opcodeToEvent(uint8_t op) {
     switch (op) {
@@ -60,7 +61,8 @@ class CmdCallbacks : public NimBLECharacteristicCallbacks {
 
 class ServerCallbacks : public NimBLEServerCallbacks {
     void onConnect(NimBLEServer*, NimBLEConnInfo& /*info*/) override {
-        g_connected = true;
+        g_connected     = true;
+        g_newConnection = true;
     }
     void onDisconnect(NimBLEServer*, NimBLEConnInfo& /*info*/, int /*reason*/) override {
         g_connected = false;
@@ -153,6 +155,12 @@ void reinit(const char* deviceName) {
 
 bool isEnabled()   { return g_enabled; }
 bool isConnected() { return g_connected; }
+
+bool takeNewConnectionFlag() {
+    if (!g_newConnection) return false;
+    g_newConnection = false;
+    return true;
+}
 
 void sendLog(const char* msg, size_t len) {
     if (!g_initialised || !g_connected || !g_logChar || !msg || len == 0) return;

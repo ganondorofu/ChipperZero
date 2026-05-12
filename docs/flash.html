@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ChipperZero Installer</title>
+  <script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: #0d0d0d;
+      color: #e0e0e0;
+      font-family: 'Courier New', monospace;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 32px;
+      padding: 24px;
+    }
+
+    h1 {
+      font-size: 2rem;
+      letter-spacing: 0.15em;
+      color: #00ff99;
+      text-shadow: 0 0 12px #00ff9966;
+    }
+
+    .subtitle {
+      color: #888;
+      font-size: 0.85rem;
+      letter-spacing: 0.05em;
+    }
+
+    .card {
+      background: #161616;
+      border: 1px solid #2a2a2a;
+      border-radius: 8px;
+      padding: 32px 40px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 24px;
+      max-width: 420px;
+      width: 100%;
+    }
+
+    .steps {
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      font-size: 0.8rem;
+      color: #666;
+    }
+
+    .steps li {
+      list-style: none;
+      padding-left: 1.2em;
+      position: relative;
+    }
+
+    .steps li::before {
+      content: '›';
+      position: absolute;
+      left: 0;
+      color: #00ff99;
+    }
+
+    esp-web-install-button {
+      --esp-tools-button-color: #00ff99;
+      --esp-tools-button-text-color: #0d0d0d;
+    }
+
+    esp-web-install-button::part(button) {
+      background: #00ff99;
+      color: #0d0d0d;
+      font-family: 'Courier New', monospace;
+      font-weight: bold;
+      font-size: 1rem;
+      letter-spacing: 0.1em;
+      padding: 12px 32px;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    esp-web-install-button::part(button):hover {
+      background: #00cc7a;
+    }
+
+    .note {
+      font-size: 0.75rem;
+      color: #555;
+      text-align: center;
+    }
+
+    a { color: #00ff99; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+
+  <div>
+    <h1>ChipperZero</h1>
+    <p class="subtitle" style="text-align:center; margin-top:6px;">ESP32 Firmware Installer</p>
+  </div>
+
+  <div class="card">
+    <ul class="steps">
+      <li>ESP32 を USB で接続</li>
+      <li>Chrome / Edge を使用（Safari 不可）</li>
+      <li>ボタンを押してポートを選択</li>
+      <li>書き込み完了後、リセットボタンを押す</li>
+    </ul>
+
+    <esp-web-install-button manifest="manifest.json"></esp-web-install-button>
+
+    <p class="note">
+      Web Serial API 対応ブラウザが必要です。<br>
+      書き込み中は USB を抜かないでください。
+    </p>
+  </div>
+
+  <p class="note">
+    <a href="index.html">← BLE Remote</a>
+    &nbsp;|&nbsp;
+    <a href="https://github.com/ganondorofu/ChipperZero" target="_blank">GitHub</a>
+  </p>
+
+</body>
+</html>

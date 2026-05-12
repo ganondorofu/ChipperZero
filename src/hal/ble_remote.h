@@ -22,6 +22,10 @@ void setEnabled(bool on);
 bool isEnabled();
 bool isConnected();
 
+// Returns true (and clears the flag) the first time after a new client
+// connects. Used by display::flush() to push an immediate frame.
+bool takeNewConnectionFlag();
+
 // Send the OLED framebuffer to the connected client as a sequence of
 // notifications on the framebuffer characteristic. Safe to call when
 // not connected (no-op). buf is the SH1106 page-format buffer (1024 bytes

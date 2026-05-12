@@ -9,12 +9,53 @@
 
 WifiSnifferModule g_wifiSniffer;
 
+// ---- Client MAC storage (static members) ------------------------------------
+
+uint8_t WifiSnifferModule::s_clientMacs[8][6] = {};
+uint8_t WifiSnifferModule::s_clientCount = 0;
+
+void WifiSnifferModule::addClientMac(const uint8_t* mac) {
+    // Ignore multicast/broadcast (LSB of first byte set)
+    if (mac[0] & 0x01) return;
+    for (uint8_t i = 0; i < s_clientCount; i++) {
+        if (memcmp(s_clientMacs[i], mac, 6) == 0) return;
+    }
+    if (s_clientCount < 8) {
+        memcpy(s_clientMacs[s_clientCount], mac, 6);
+        s_clientCount++;
+    }
+}
+
+uint8_t WifiSnifferModule::getClientCount() { return s_clientCount; }
+
+bool WifiSnifferModule::getClientMac(uint8_t i, uint8_t mac[6]) {
+    if (i >= s_clientCount) return false;
+    memcpy(mac, s_clientMacs[i], 6);
+    return true;
+}
+
 // ---- Promiscuous callback ---------------------------------------------------
 
 static void snifferCb(void* buf, wifi_promiscuous_pkt_type_t type) {
+    const wifi_promiscuous_pkt_t* pkt = (const wifi_promiscuous_pkt_t*)buf;
+    const uint8_t* frame = pkt->payload;
+
     switch (type) {
         case WIFI_PKT_MGMT: g_wifiSniffer.addMgmt(); break;
-        case WIFI_PKT_DATA: g_wifiSniffer.addData(); break;
+        case WIFI_PKT_DATA: {
+            g_wifiSniffer.addData();
+            // 802.11 data frame: frame control is bytes 0-1
+            // fc[1] bit0=ToDS, bit1=FromDS
+            uint8_t fc1 = frame[1];
+            bool toDS   = fc1 & 0x01;
+            bool fromDS = fc1 & 0x02;
+            if (toDS && !fromDS) {
+                // Client→AP: Addr2 (bytes 10–15) = client MAC
+                const uint8_t* client = frame + 10;
+                WifiSnifferModule::addClientMac(client);
+            }
+            break;
+        }
         case WIFI_PKT_CTRL: g_wifiSniffer.addCtrl(); break;
         default: break;
     }
@@ -79,9 +120,20 @@ void WifiSnifferModule::onEvent(uint8_t ev) {
 }
 
 void WifiSnifferModule::fillStats(char* buf, size_t len) {
-    snprintf(buf, len, "Ch%u Mgmt:%lu\nData:%lu Ctrl:%lu",
-             channel_,
-             (unsigned long)mgmt_.load(),
-             (unsigned long)data_.load(),
-             (unsigned long)ctrl_.load());
+    uint8_t cc = s_clientCount;
+    if (cc > 0) {
+        // Show first client MAC on second line
+        uint8_t* m = s_clientMacs[0];
+        snprintf(buf, len, "Ch:%u M:%lu D:%lu\nC:%u %02X:%02X:%02X:%02X:%02X:%02X",
+                 channel_,
+                 (unsigned long)mgmt_.load(),
+                 (unsigned long)data_.load(),
+                 cc,
+                 m[0], m[1], m[2], m[3], m[4], m[5]);
+    } else {
+        snprintf(buf, len, "Ch:%u  M:%lu D:%lu\nClients: 0",
+                 channel_,
+                 (unsigned long)mgmt_.load(),
+                 (unsigned long)data_.load());
+    }
 }

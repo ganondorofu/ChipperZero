@@ -29,4 +29,8 @@ public:
     // Optional: called when encoder LEFT/RIGHT fires while this module is running.
     // ev is encoder::InputEvent cast to uint8_t.
     virtual void onEvent(uint8_t /*ev*/) {}
+
+    // Optional: override to draw directly to U8G2 instead of using drawModuleRunning.
+    virtual bool hasCustomDraw() { return false; }
+    virtual void draw() {}
 };

@@ -255,25 +255,28 @@ async function connect() {
     log('GATT 接続中...');
     const server  = await device.gatt.connect();
     const service = await server.getPrimaryService(SERVICE_UUID);
-    cmdChar = await service.getCharacteristic(CMD_UUID);
 
-    for (const [uuid, onEvt, label] of [
-      [STATUS_UUID, onStatus,    'Status'],
-      [FB_UUID,     onFrameChunk,'Framebuffer'],
-      [LOG_UUID,    onDeviceLog, 'Device log'],
-    ]) {
-      try {
-        const ch = await service.getCharacteristic(uuid);
-        await ch.startNotifications();
-        ch.addEventListener('characteristicvaluechanged', onEvt);
-        if (uuid === STATUS_UUID) statusChar = ch;
-        if (uuid === FB_UUID)     fbChar = ch;
-        if (uuid === LOG_UUID)    logChar = ch;
-        log(`${label} subscribed`, 'ok');
-      } catch (e) {
-        log(`${label} char 取得失敗: ${e.message}`, 'err');
-      }
-    }
+    // Discover all characteristics in parallel to minimize round-trip latency.
+    const [cmdCh, statusCh, fbCh, logCh] = await Promise.all([
+      service.getCharacteristic(CMD_UUID),
+      service.getCharacteristic(STATUS_UUID),
+      service.getCharacteristic(FB_UUID),
+      service.getCharacteristic(LOG_UUID),
+    ]);
+    cmdChar = cmdCh;
+
+    // Subscribe to all notify characteristics in parallel.
+    await Promise.all([
+      statusCh.startNotifications(),
+      fbCh.startNotifications(),
+      logCh.startNotifications(),
+    ]);
+    statusCh.addEventListener('characteristicvaluechanged', onStatus);
+    fbCh.addEventListener('characteristicvaluechanged', onFrameChunk);
+    logCh.addEventListener('characteristicvaluechanged', onDeviceLog);
+    statusChar = statusCh; fbChar = fbCh; logChar = logCh;
+    log('subscribed', 'ok');
+
     setConnected(true);
     log('接続完了', 'ok');
   } catch (e) {

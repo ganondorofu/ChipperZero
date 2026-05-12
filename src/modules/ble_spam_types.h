@@ -1,5 +1,20 @@
 #pragma once
 #include <stdint.h>
 
-// Spam target type shared by BleSpamModule (ESP32) and NrfBleSpamModule (NRF24).
-enum class BleSpamType : uint8_t { ALL = 0, APPLE, GOOGLE, SAMSUNG, MICROSOFT };
+enum class BleSpamType : uint8_t {
+    ALL = 0,
+    // Apple
+    APPLE,           // rotate all Apple variants
+    APPLE_ACTION,    // ContinuityAction popup only
+    APPLE_AIRPODS,   // NewDevicePopUp (AirPods/Beats)
+    APPLE_AIRTAG,    // NewAirtagPopUp
+    APPLE_NEARBY,    // NearbyAction / iOS17
+    // Google
+    GOOGLE,
+    // Samsung
+    SAMSUNG,         // rotate Watch + Buds
+    SAMSUNG_WATCH,
+    SAMSUNG_BUDS,
+    // Microsoft
+    MICROSOFT,
+};

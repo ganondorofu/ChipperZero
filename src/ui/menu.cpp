@@ -16,8 +16,14 @@
 #include "../modules/wifi_beacon.h"
 #include "../modules/wifi_deauth.h"
 #include "../modules/wifi_evil_twin.h"
+#include "../modules/wifi_beacon_clone.h"
 #include "../modules/wifi_sniffer.h"
+#include "../modules/wifi_evil_portal.h"
+#include "../modules/wifi_spectrum.h"
+#include "../modules/nrf_jammer.h"
+#include "../modules/nrf_mousejack.h"
 #include "screen.h"
+#include "../hal/keyboard.h"
 
 namespace menu {
 
@@ -31,6 +37,9 @@ enum class LeafKind : uint8_t {
     INFO_BATTERY,
     INFO_ABOUT,
     TOGGLE_BLE_REMOTE,
+    OPEN_KEYBOARD,
+    OPEN_KB_BEACON,
+    OPEN_KB_MJ,
     BACK,
 };
 
@@ -56,12 +65,18 @@ struct Node {
 
 enum class Radio : uint8_t { ESP = 0, NRF = 1, DUAL = 2 };
 
-static const BleSpamType kSpamTypes[] = {
-    BleSpamType::ALL, BleSpamType::APPLE, BleSpamType::GOOGLE,
-    BleSpamType::SAMSUNG, BleSpamType::MICROSOFT,
-};
-static const char* kSpamTypeNames[] = {"All","Apple","Google","Samsung","Windows"};
-static constexpr uint8_t kSpamTypeCount = 5;
+static bool nrfSupports(BleSpamType t) {
+    switch (t) {
+        case BleSpamType::ALL:
+        case BleSpamType::APPLE:
+        case BleSpamType::GOOGLE:
+        case BleSpamType::SAMSUNG:
+        case BleSpamType::MICROSOFT:
+            return true;
+        default:
+            return false;
+    }
+}
 
 struct SpamProxy : public IModule {
     BleSpamType type_;
@@ -72,16 +87,16 @@ struct SpamProxy : public IModule {
 
     bool init()        override { return true; }
     bool isAvailable() override {
-        if (radio_ == Radio::ESP)  return g_bleSpam.isAvailable();
-        if (radio_ == Radio::NRF)  return g_nrfBleSpam.isAvailable();
-        return g_bleSpam.isAvailable() && g_nrfBleSpam.isAvailable();
+        if (radio_ == Radio::NRF)  return g_nrfBleSpam.isAvailable() && nrfSupports(type_);
+        if (radio_ == Radio::DUAL) return g_bleSpam.isAvailable() && g_nrfBleSpam.isAvailable();
+        return g_bleSpam.isAvailable();
     }
 
     void start() override {
         if (radio_ == Radio::ESP  || radio_ == Radio::DUAL) g_bleSpam.setType(type_);
         if (radio_ == Radio::NRF  || radio_ == Radio::DUAL) g_nrfBleSpam.setType(type_);
         if (radio_ == Radio::DUAL) {
-            g_nrfBleSpam.start();
+            if (nrfSupports(type_)) g_nrfBleSpam.start();
             g_bleSpam.start();
         } else if (radio_ == Radio::ESP) {
             g_bleSpam.start();
@@ -92,7 +107,7 @@ struct SpamProxy : public IModule {
 
     void stop() override {
         if (radio_ == Radio::DUAL) {
-            g_nrfBleSpam.stop();
+            if (nrfSupports(type_)) g_nrfBleSpam.stop();
             g_bleSpam.stop();
         } else if (radio_ == Radio::ESP) {
             g_bleSpam.stop();
@@ -101,27 +116,9 @@ struct SpamProxy : public IModule {
         }
     }
 
-    // Rotate spam type with LEFT/RIGHT while running.
-    void onEvent(uint8_t ev) override {
-        uint8_t idx = 0;
-        for (uint8_t i = 0; i < kSpamTypeCount; i++) {
-            if (kSpamTypes[i] == type_) { idx = i; break; }
-        }
-        if (ev == static_cast<uint8_t>(encoder::EVENT_RIGHT))
-            idx = (idx + 1) % kSpamTypeCount;
-        else if (ev == static_cast<uint8_t>(encoder::EVENT_LEFT))
-            idx = (idx + kSpamTypeCount - 1) % kSpamTypeCount;
-        else return;
-        type_ = kSpamTypes[idx];
-        if (radio_ == Radio::ESP  || radio_ == Radio::DUAL) g_bleSpam.setType(type_);
-        if (radio_ == Radio::NRF  || radio_ == Radio::DUAL) g_nrfBleSpam.setType(type_);
-    }
+    void onEvent(uint8_t) override {}
 
     void fillStats(char* buf, size_t len) override {
-        const char* tname = "?";
-        for (uint8_t i = 0; i < kSpamTypeCount; i++) {
-            if (kSpamTypes[i] == type_) { tname = kSpamTypeNames[i]; break; }
-        }
         char stats[12] = "";
         if (radio_ == Radio::ESP) {
             g_bleSpam.fillStats(stats, sizeof(stats));
@@ -133,41 +130,96 @@ struct SpamProxy : public IModule {
             g_nrfBleSpam.fillStats(b, sizeof(b));
             snprintf(stats, sizeof(stats), "E:%s N:%s", a, b);
         }
-        snprintf(buf, len, "%s | %s", tname, stats);
+        snprintf(buf, len, "%s", stats);
     }
 
     const char* name() override { return name_; }
 };
 
-// 5 types × 3 radios = 15 proxies (initial type set per menu item)
-static SpamProxy s_allEsp    (BleSpamType::ALL,       Radio::ESP,  "ESP32 Spam");
-static SpamProxy s_allNrf    (BleSpamType::ALL,       Radio::NRF,  "NRF24 Spam");
-static SpamProxy s_allDual   (BleSpamType::ALL,       Radio::DUAL, "Dual Spam" );
-static SpamProxy s_appleEsp  (BleSpamType::APPLE,     Radio::ESP,  "ESP32 Spam");
-static SpamProxy s_appleNrf  (BleSpamType::APPLE,     Radio::NRF,  "NRF24 Spam");
-static SpamProxy s_appleDual (BleSpamType::APPLE,     Radio::DUAL, "Dual Spam" );
-static SpamProxy s_googleEsp (BleSpamType::GOOGLE,    Radio::ESP,  "ESP32 Spam");
-static SpamProxy s_googleNrf (BleSpamType::GOOGLE,    Radio::NRF,  "NRF24 Spam");
-static SpamProxy s_googleDual(BleSpamType::GOOGLE,    Radio::DUAL, "Dual Spam" );
-static SpamProxy s_samsEsp   (BleSpamType::SAMSUNG,   Radio::ESP,  "ESP32 Spam");
-static SpamProxy s_samsNrf   (BleSpamType::SAMSUNG,   Radio::NRF,  "NRF24 Spam");
-static SpamProxy s_samsDual  (BleSpamType::SAMSUNG,   Radio::DUAL, "Dual Spam" );
-static SpamProxy s_msEsp     (BleSpamType::MICROSOFT, Radio::ESP,  "ESP32 Spam");
-static SpamProxy s_msNrf     (BleSpamType::MICROSOFT, Radio::NRF,  "NRF24 Spam");
-static SpamProxy s_msDual    (BleSpamType::MICROSOFT, Radio::DUAL, "Dual Spam" );
+// ---- SpamProxy instances: type × radio ---------------------------------------
+// All
+static SpamProxy s_allEsp    (BleSpamType::ALL,           Radio::ESP,  "All Spam");
+static SpamProxy s_allNrf    (BleSpamType::ALL,           Radio::NRF,  "All Spam");
+static SpamProxy s_allDual   (BleSpamType::ALL,           Radio::DUAL, "All Spam");
+// Apple
+static SpamProxy s_appleEsp    (BleSpamType::APPLE,           Radio::ESP,  "Apple All");
+static SpamProxy s_appleNrf    (BleSpamType::APPLE,           Radio::NRF,  "Apple All");
+static SpamProxy s_appleDual   (BleSpamType::APPLE,           Radio::DUAL, "Apple All");
+static SpamProxy s_apActEsp    (BleSpamType::APPLE_ACTION,    Radio::ESP,  "Action");
+static SpamProxy s_apActNrf    (BleSpamType::APPLE_ACTION,    Radio::NRF,  "Action");
+static SpamProxy s_apActDual   (BleSpamType::APPLE_ACTION,    Radio::DUAL, "Action");
+static SpamProxy s_apPodsEsp   (BleSpamType::APPLE_AIRPODS,   Radio::ESP,  "AirPods");
+static SpamProxy s_apPodsNrf   (BleSpamType::APPLE_AIRPODS,   Radio::NRF,  "AirPods");
+static SpamProxy s_apPodsDual  (BleSpamType::APPLE_AIRPODS,   Radio::DUAL, "AirPods");
+static SpamProxy s_apTagEsp    (BleSpamType::APPLE_AIRTAG,    Radio::ESP,  "AirTag");
+static SpamProxy s_apTagNrf    (BleSpamType::APPLE_AIRTAG,    Radio::NRF,  "AirTag");
+static SpamProxy s_apTagDual   (BleSpamType::APPLE_AIRTAG,    Radio::DUAL, "AirTag");
+static SpamProxy s_apNearEsp   (BleSpamType::APPLE_NEARBY,    Radio::ESP,  "Nearby");
+static SpamProxy s_apNearNrf   (BleSpamType::APPLE_NEARBY,    Radio::NRF,  "Nearby");
+static SpamProxy s_apNearDual  (BleSpamType::APPLE_NEARBY,    Radio::DUAL, "Nearby");
+// Google
+static SpamProxy s_googleEsp (BleSpamType::GOOGLE,    Radio::ESP,  "Google");
+static SpamProxy s_googleNrf (BleSpamType::GOOGLE,    Radio::NRF,  "Google");
+static SpamProxy s_googleDual(BleSpamType::GOOGLE,    Radio::DUAL, "Google");
+// Samsung
+static SpamProxy s_samsEsp    (BleSpamType::SAMSUNG,       Radio::ESP,  "Samsung All");
+static SpamProxy s_samsNrf    (BleSpamType::SAMSUNG,       Radio::NRF,  "Samsung All");
+static SpamProxy s_samsDual   (BleSpamType::SAMSUNG,       Radio::DUAL, "Samsung All");
+static SpamProxy s_samsWEsp   (BleSpamType::SAMSUNG_WATCH, Radio::ESP,  "Watch");
+static SpamProxy s_samsWNrf   (BleSpamType::SAMSUNG_WATCH, Radio::NRF,  "Watch");
+static SpamProxy s_samsWDual  (BleSpamType::SAMSUNG_WATCH, Radio::DUAL, "Watch");
+static SpamProxy s_samsBEsp   (BleSpamType::SAMSUNG_BUDS,  Radio::ESP,  "Buds");
+static SpamProxy s_samsBNrf   (BleSpamType::SAMSUNG_BUDS,  Radio::NRF,  "Buds");
+static SpamProxy s_samsBDual  (BleSpamType::SAMSUNG_BUDS,  Radio::DUAL, "Buds");
+// Microsoft
+static SpamProxy s_msEsp     (BleSpamType::MICROSOFT, Radio::ESP,  "Windows");
+static SpamProxy s_msNrf     (BleSpamType::MICROSOFT, Radio::NRF,  "Windows");
+static SpamProxy s_msDual    (BleSpamType::MICROSOFT, Radio::DUAL, "Windows");
 
-// ---- Hardware → Type submenus -----------------------------------------------
-#define HW_TYPE_ITEMS(all, apple, google, sams, ms) \
-    {"All Devices", nullptr, (all),   LeafKind::MODULE}, \
-    {"Apple",       nullptr, (apple), LeafKind::MODULE}, \
-    {"Google",      nullptr, (google),LeafKind::MODULE}, \
-    {"Samsung",     nullptr, (sams),  LeafKind::MODULE}, \
-    {"Windows",     nullptr, (ms),    LeafKind::MODULE}, \
+// ---- Apple sub-submenus (ESP / NRF / Dual) ----------------------------------
+#define APPLE_ITEMS(all, act, pods, tag, near) \
+    {"All Apple",  nullptr, (all),  LeafKind::MODULE}, \
+    {"AirPods",    nullptr, (pods), LeafKind::MODULE}, \
+    {"AirTag",     nullptr, (tag),  LeafKind::MODULE}, \
+    {"Action",     nullptr, (act),  LeafKind::MODULE}, \
+    {"Nearby",     nullptr, (near), LeafKind::MODULE}, \
+    {"Back",       nullptr, nullptr,LeafKind::BACK  }
+
+const Item kAppleEspItems[]  = { APPLE_ITEMS(&s_appleEsp,  &s_apActEsp,  &s_apPodsEsp,  &s_apTagEsp,  &s_apNearEsp ) };
+const Item kAppleNrfItems[]  = { APPLE_ITEMS(&s_appleNrf,  &s_apActNrf,  &s_apPodsNrf,  &s_apTagNrf,  &s_apNearNrf ) };
+const Item kAppleDualItems[] = { APPLE_ITEMS(&s_appleDual, &s_apActDual, &s_apPodsDual, &s_apTagDual, &s_apNearDual) };
+
+const Node kAppleEspNode  = {"Apple (ESP)",  kAppleEspItems,  sizeof(kAppleEspItems) /sizeof(kAppleEspItems[0]) };
+const Node kAppleNrfNode  = {"Apple (NRF)",  kAppleNrfItems,  sizeof(kAppleNrfItems) /sizeof(kAppleNrfItems[0]) };
+const Node kAppleDualNode = {"Apple (Dual)", kAppleDualItems, sizeof(kAppleDualItems)/sizeof(kAppleDualItems[0])};
+
+// ---- Samsung sub-submenus ---------------------------------------------------
+#define SAMSUNG_ITEMS(all, watch, buds) \
+    {"All Samsung", nullptr, (all),   LeafKind::MODULE}, \
+    {"Watch",       nullptr, (watch), LeafKind::MODULE}, \
+    {"Buds",        nullptr, (buds),  LeafKind::MODULE}, \
     {"Back",        nullptr, nullptr, LeafKind::BACK  }
 
-const Item kEspItems[]  = { HW_TYPE_ITEMS(&s_allEsp,  &s_appleEsp,  &s_googleEsp,  &s_samsEsp,  &s_msEsp ) };
-const Item kNrfItems[]  = { HW_TYPE_ITEMS(&s_allNrf,  &s_appleNrf,  &s_googleNrf,  &s_samsNrf,  &s_msNrf ) };
-const Item kDualItems[] = { HW_TYPE_ITEMS(&s_allDual, &s_appleDual, &s_googleDual, &s_samsDual, &s_msDual) };
+const Item kSamsEspItems[]  = { SAMSUNG_ITEMS(&s_samsEsp,  &s_samsWEsp,  &s_samsBEsp ) };
+const Item kSamsNrfItems[]  = { SAMSUNG_ITEMS(&s_samsNrf,  &s_samsWNrf,  &s_samsBNrf ) };
+const Item kSamsDualItems[] = { SAMSUNG_ITEMS(&s_samsDual, &s_samsWDual, &s_samsBDual) };
+
+const Node kSamsEspNode  = {"Samsung (ESP)",  kSamsEspItems,  sizeof(kSamsEspItems) /sizeof(kSamsEspItems[0]) };
+const Node kSamsNrfNode  = {"Samsung (NRF)",  kSamsNrfItems,  sizeof(kSamsNrfItems) /sizeof(kSamsNrfItems[0]) };
+const Node kSamsDualNode = {"Samsung (Dual)", kSamsDualItems, sizeof(kSamsDualItems)/sizeof(kSamsDualItems[0])};
+
+// ---- Hardware → Type submenus -----------------------------------------------
+#define HW_TYPE_ITEMS(appleNode, all, google, ms, samsNode) \
+    {"All Devices", nullptr,    (all),    LeafKind::MODULE}, \
+    {"Apple",       (appleNode),nullptr,  LeafKind::NONE  }, \
+    {"Google",      nullptr,    (google), LeafKind::MODULE}, \
+    {"Samsung",     (samsNode), nullptr,  LeafKind::NONE  }, \
+    {"Windows",     nullptr,    (ms),     LeafKind::MODULE}, \
+    {"Back",        nullptr,    nullptr,  LeafKind::BACK  }
+
+const Item kEspItems[]  = { HW_TYPE_ITEMS(&kAppleEspNode,  &s_allEsp,  &s_googleEsp,  &s_msEsp,  &kSamsEspNode ) };
+const Item kNrfItems[]  = { HW_TYPE_ITEMS(&kAppleNrfNode,  &s_allNrf,  &s_googleNrf,  &s_msNrf,  &kSamsNrfNode ) };
+const Item kDualItems[] = { HW_TYPE_ITEMS(&kAppleDualNode, &s_allDual, &s_googleDual, &s_msDual, &kSamsDualNode) };
 
 const Node kEspNode  = {"ESP32 Spam", kEspItems,  sizeof(kEspItems) /sizeof(kEspItems[0]) };
 const Node kNrfNode  = {"NRF24 Spam", kNrfItems,  sizeof(kNrfItems) /sizeof(kNrfItems[0]) };
@@ -175,21 +227,25 @@ const Node kDualNode = {"Dual Spam",  kDualItems, sizeof(kDualItems)/sizeof(kDua
 
 // ---- BLE Spam submenu -------------------------------------------------------
 const Item kBleItems[] = {
-    {"ESP32",    &kEspNode,   nullptr,      LeafKind::NONE  },
-    {"NRF24",    &kNrfNode,   nullptr,      LeafKind::NONE  },
-    {"Dual",     &kDualNode,  nullptr,      LeafKind::NONE  },
-    {"NRF Spam", nullptr,     &g_nrfSpam,   LeafKind::MODULE},
-    {"Scanner",  nullptr,     &g_bleScan,   LeafKind::MODULE},
-    {"Back",     nullptr,     nullptr,      LeafKind::BACK  },
+    {"ESP32",      &kEspNode,   nullptr,          LeafKind::NONE     },
+    {"NRF24",      &kNrfNode,   nullptr,          LeafKind::NONE     },
+    {"Dual",       &kDualNode,  nullptr,          LeafKind::NONE     },
+    {"NRF Spam",   nullptr,     &g_nrfSpam,       LeafKind::MODULE   },
+    {"MouseJack",  nullptr,     &g_nrfMousejack,  LeafKind::MODULE   },
+    {"MJ Custom",  nullptr,     nullptr,          LeafKind::OPEN_KB_MJ},
+    {"Scanner",    nullptr,     &g_bleScan,       LeafKind::MODULE   },
+    {"BT Jammer",  nullptr,     &g_nrfJammer,     LeafKind::MODULE   },
+    {"Back",       nullptr,     nullptr,          LeafKind::BACK     },
 };
 const Node kBleNode = {"BLE Spam", kBleItems, sizeof(kBleItems)/sizeof(kBleItems[0])};
 
 // ---- System submenu ---------------------------------------------------------
 const Item kSysItems[] = {
-    {"Battery",    nullptr, nullptr, LeafKind::INFO_BATTERY   },
-    {"BLE Remote", nullptr, nullptr, LeafKind::TOGGLE_BLE_REMOTE},
-    {"About",      nullptr, nullptr, LeafKind::INFO_ABOUT     },
-    {"Back",       nullptr, nullptr, LeafKind::BACK           },
+    {"Battery",    nullptr, nullptr, LeafKind::INFO_BATTERY      },
+    {"BLE Remote", nullptr, nullptr, LeafKind::TOGGLE_BLE_REMOTE },
+    {"Keyboard",   nullptr, nullptr, LeafKind::OPEN_KEYBOARD     },
+    {"About",      nullptr, nullptr, LeafKind::INFO_ABOUT        },
+    {"Back",       nullptr, nullptr, LeafKind::BACK              },
 };
 const Node kSysNode = {"System", kSysItems, sizeof(kSysItems)/sizeof(kSysItems[0])};
 
@@ -199,7 +255,7 @@ struct IrProxy : public IModule {
     IrMode      mode_;
     const char* name_;
     IrProxy(IrMode m, const char* n) : mode_(m), name_(n) {}
-    bool init()        override { return false; }
+    bool init()        override { return true; }
     bool isAvailable() override { return g_ir.isAvailable(); }
     void start()       override { g_ir.setMode(mode_, name_); g_ir.start(); }
     void stop()        override { g_ir.stop(); }
@@ -208,9 +264,39 @@ struct IrProxy : public IModule {
     const char* name() override { return name_; }
 };
 
-static IrProxy s_irTvKill (IrMode::TV_KILL, "TV Kill");
-static IrProxy s_irCapture(IrMode::CAPTURE, "IR Capture");
-static IrProxy s_irReplay (IrMode::REPLAY,  "IR Replay");
+struct IrPresetProxy : public IModule {
+    uint8_t     cat_;
+    const char* name_;
+    IrPresetProxy(uint8_t cat, const char* n) : cat_(cat), name_(n) {}
+    bool init()        override { return true; }
+    bool isAvailable() override { return g_ir.isAvailable(); }
+    void start()       override {
+        g_ir.setMode(IrMode::PRESET, name_);
+        g_ir.setPresetCat(cat_);
+        g_ir.start();
+    }
+    void stop()        override { g_ir.stop(); }
+    void onEvent(uint8_t ev)    override { g_ir.onEvent(ev); }
+    void fillStats(char* b, size_t l) override { g_ir.fillStats(b, l); }
+    const char* name() override { return name_; }
+};
+
+static IrProxy       s_irTvKill (IrMode::TV_KILL, "TV Kill");
+static IrProxy       s_irCapture(IrMode::CAPTURE,  "IR Record");
+static IrProxy       s_irReplay (IrMode::REPLAY,   "IR Replay");
+static IrPresetProxy s_irPrPwr  (0, "TV Power");
+static IrPresetProxy s_irPrVolUp(1, "TV Vol+");
+static IrPresetProxy s_irPrVolDn(2, "TV Vol-");
+static IrPresetProxy s_irPrMute (3, "TV Mute");
+
+const Item kIrPresetItems[] = {
+    {"TV Power", nullptr, &s_irPrPwr,   LeafKind::MODULE},
+    {"TV Vol+",  nullptr, &s_irPrVolUp, LeafKind::MODULE},
+    {"TV Vol-",  nullptr, &s_irPrVolDn, LeafKind::MODULE},
+    {"TV Mute",  nullptr, &s_irPrMute,  LeafKind::MODULE},
+    {"Back",     nullptr, nullptr,      LeafKind::BACK  },
+};
+const Node kIrPresetNode = {"Presets", kIrPresetItems, sizeof(kIrPresetItems)/sizeof(kIrPresetItems[0])};
 
 // ---- NFC proxy --------------------------------------------------------------
 
@@ -234,10 +320,11 @@ static NfcProxy s_nfcEmulate(NfcMode::EMULATE, "NFC Emulate");
 // ---- IR submenu -------------------------------------------------------------
 
 const Item kIrItems[] = {
-    {"TV Kill",  nullptr, &s_irTvKill,  LeafKind::MODULE},
-    {"Capture",  nullptr, &s_irCapture, LeafKind::MODULE},
-    {"Replay",   nullptr, &s_irReplay,  LeafKind::MODULE},
-    {"Back",     nullptr, nullptr,      LeafKind::BACK  },
+    {"TV Kill",  nullptr,        &s_irTvKill,  LeafKind::MODULE},
+    {"Presets",  &kIrPresetNode, nullptr,      LeafKind::NONE  },
+    {"Record",   nullptr,        &s_irCapture, LeafKind::MODULE},
+    {"Replay",   nullptr,        &s_irReplay,  LeafKind::MODULE},
+    {"Back",     nullptr,        nullptr,      LeafKind::BACK  },
 };
 const Node kIrNode = {"IR", kIrItems, sizeof(kIrItems)/sizeof(kIrItems[0])};
 
@@ -251,14 +338,95 @@ const Item kNfcItems[] = {
 };
 const Node kNfcNode = {"NFC", kNfcItems, sizeof(kNfcItems)/sizeof(kNfcItems[0])};
 
+// ---- Beacon proxy (count preset) -------------------------------------------
+struct BeaconProxy : public IModule {
+    uint16_t    count_;
+    const char* name_;
+    BeaconProxy(uint16_t c, const char* n) : count_(c), name_(n) {}
+    bool init()        override { return true; }
+    bool isAvailable() override { return g_wifiBeacon.isAvailable(); }
+    void start()       override { g_wifiBeacon.setCount(count_); g_wifiBeacon.start(); }
+    void stop()        override { g_wifiBeacon.stop(); }
+    void onEvent(uint8_t ev)    override { g_wifiBeacon.onEvent(ev); }
+    void fillStats(char* b, size_t l) override { g_wifiBeacon.fillStats(b, l); }
+    const char* name() override { return name_; }
+};
+
+static BeaconProxy s_beaconUnlim(0,   "Beacon ∞");
+static BeaconProxy s_beacon10   (10,  "Beacon x10");
+static BeaconProxy s_beacon50   (50,  "Beacon x50");
+static BeaconProxy s_beacon100  (100, "Beacon x100");
+
+// ---- Beacon submenu ---------------------------------------------------------
+const Item kBeaconItems[] = {
+    {"Unlimited",   nullptr, &s_beaconUnlim,     LeafKind::MODULE      },
+    {"Burst 10",    nullptr, &s_beacon10,        LeafKind::MODULE      },
+    {"Burst 50",    nullptr, &s_beacon50,        LeafKind::MODULE      },
+    {"Burst 100",   nullptr, &s_beacon100,       LeafKind::MODULE      },
+    {"Clone",       nullptr, &g_wifiBeaconClone, LeafKind::MODULE      },
+    {"Custom SSID", nullptr, nullptr,            LeafKind::OPEN_KB_BEACON},
+    {"Back",        nullptr, nullptr,            LeafKind::BACK        },
+};
+const Node kBeaconNode = {"Beacon Spam", kBeaconItems, sizeof(kBeaconItems)/sizeof(kBeaconItems[0])};
+
+// ---- Deauth proxy -----------------------------------------------------------
+struct DeauthProxy : public IModule {
+    DeauthMode  mode_;
+    const char* name_;
+    DeauthProxy(DeauthMode m, const char* n) : mode_(m), name_(n) {}
+    bool init()        override { return true; }
+    bool isAvailable() override { return g_wifiDeauth.isAvailable(); }
+    void start()       override { g_wifiDeauth.setMode(mode_); g_wifiDeauth.start(); }
+    void stop()        override { g_wifiDeauth.stop(); }
+    void onEvent(uint8_t ev)   override { g_wifiDeauth.onEvent(ev); }
+    void fillStats(char* b, size_t l) override { g_wifiDeauth.fillStats(b, l); }
+    const char* name() override { return name_; }
+};
+
+static DeauthProxy s_deauthRandom  (DeauthMode::RANDOM,   "Deauth All");
+static DeauthProxy s_deauthTargeted(DeauthMode::TARGETED, "Deauth Target");
+
+const Item kDeauthItems[] = {
+    {"Indiscriminate", nullptr, &s_deauthRandom,   LeafKind::MODULE},
+    {"Targeted",       nullptr, &s_deauthTargeted, LeafKind::MODULE},
+    {"Back",           nullptr, nullptr,           LeafKind::BACK  },
+};
+const Node kDeauthNode = {"Deauth", kDeauthItems, sizeof(kDeauthItems)/sizeof(kDeauthItems[0])};
+
+// ---- Evil Twin proxy --------------------------------------------------------
+struct EvilTwinProxy : public IModule {
+    bool        auto_;
+    const char* name_;
+    EvilTwinProxy(bool a, const char* n) : auto_(a), name_(n) {}
+    bool init()        override { return true; }
+    bool isAvailable() override { return g_wifiEvilTwin.isAvailable(); }
+    void start()       override { g_wifiEvilTwin.setAuto(auto_); g_wifiEvilTwin.start(); }
+    void stop()        override { g_wifiEvilTwin.stop(); }
+    void onEvent(uint8_t ev)   override { g_wifiEvilTwin.onEvent(ev); }
+    void fillStats(char* b, size_t l) override { g_wifiEvilTwin.fillStats(b, l); }
+    const char* name() override { return name_; }
+};
+
+static EvilTwinProxy s_twinAuto  (true,  "Twin Auto");
+static EvilTwinProxy s_twinManual(false, "Twin Manual");
+
+const Item kEvilTwinItems[] = {
+    {"Auto (strongest)", nullptr, &s_twinAuto,   LeafKind::MODULE},
+    {"Manual",           nullptr, &s_twinManual, LeafKind::MODULE},
+    {"Back",             nullptr, nullptr,       LeafKind::BACK  },
+};
+const Node kEvilTwinNode = {"Evil Twin", kEvilTwinItems, sizeof(kEvilTwinItems)/sizeof(kEvilTwinItems[0])};
+
 // ---- WiFi submenu -----------------------------------------------------------
 const Item kWifiItems[] = {
-    {"AP Scan",     nullptr, &g_wifiScan,      LeafKind::MODULE},
-    {"Beacon Spam", nullptr, &g_wifiBeacon,    LeafKind::MODULE},
-    {"Deauth",      nullptr, &g_wifiDeauth,    LeafKind::MODULE},
-    {"Evil Twin",   nullptr, &g_wifiEvilTwin,  LeafKind::MODULE},
-    {"Sniffer",     nullptr, &g_wifiSniffer,   LeafKind::MODULE},
-    {"Back",        nullptr, nullptr,          LeafKind::BACK  },
+    {"AP Scan",     nullptr,        &g_wifiScan,        LeafKind::MODULE},
+    {"Spectrum",    nullptr,        &g_wifiSpectrum,    LeafKind::MODULE},
+    {"Beacon Spam", &kBeaconNode,   nullptr,            LeafKind::NONE  },
+    {"Deauth",      &kDeauthNode,   nullptr,            LeafKind::NONE  },
+    {"Evil Twin",   &kEvilTwinNode, nullptr,            LeafKind::NONE  },
+    {"Evil Portal", nullptr,        &g_wifiEvilPortal,  LeafKind::MODULE},
+    {"Sniffer",     nullptr,        &g_wifiSniffer,     LeafKind::MODULE},
+    {"Back",        nullptr,        nullptr,            LeafKind::BACK  },
 };
 const Node kWifiNode = {"WiFi", kWifiItems, sizeof(kWifiItems)/sizeof(kWifiItems[0])};
 
@@ -280,16 +448,21 @@ enum class View : uint8_t {
     MODULE_RUNNING,
     INFO_BATTERY,
     INFO_ABOUT,
+    KEYBOARD,
 };
 
-constexpr uint8_t kStackMax = 4;
+constexpr uint8_t kStackMax = 6;
 const Node* g_stack[kStackMax];
 uint8_t     g_stackDepth = 0;
 uint8_t     g_selected[kStackMax] = {0};
 
-View      g_view = View::LIST;
-IModule*  g_active = nullptr;
-bool      g_dirty = true;
+enum class KbAction : uint8_t { NONE, BEACON_CUSTOM, MJ_CUSTOM };
+
+View             g_view     = View::LIST;
+IModule*         g_active   = nullptr;
+bool             g_dirty    = true;
+keyboard::State  g_kbState;
+KbAction         g_kbAction = KbAction::NONE;
 
 const Node* curNode() { return g_stack[g_stackDepth - 1]; }
 uint8_t&    curSel()  { return g_selected[g_stackDepth - 1]; }
@@ -312,7 +485,11 @@ bool itemEnabled(const Item& it) {
 
 void render() {
     if (g_view == View::MODULE_RUNNING) {
-        screen::drawModuleRunning(g_active);
+        if (g_active && g_active->hasCustomDraw()) {
+            g_active->draw();
+        } else {
+            screen::drawModuleRunning(g_active);
+        }
         return;
     }
     if (g_view == View::INFO_BATTERY) {
@@ -321,6 +498,10 @@ void render() {
     }
     if (g_view == View::INFO_ABOUT) {
         screen::drawAbout();
+        return;
+    }
+    if (g_view == View::KEYBOARD) {
+        keyboard::render(g_kbState);
         return;
     }
     const Node* n = curNode();
@@ -372,6 +553,24 @@ void activateItem(const Item& it) {
             ble_remote::setEnabled(!ble_remote::isEnabled());
             g_dirty = true;
             break;
+        case LeafKind::OPEN_KEYBOARD:
+            keyboard::init(g_kbState);
+            g_kbAction = KbAction::NONE;
+            g_view = View::KEYBOARD;
+            g_dirty = true;
+            break;
+        case LeafKind::OPEN_KB_BEACON:
+            keyboard::init(g_kbState);
+            g_kbAction = KbAction::BEACON_CUSTOM;
+            g_view = View::KEYBOARD;
+            g_dirty = true;
+            break;
+        case LeafKind::OPEN_KB_MJ:
+            keyboard::init(g_kbState);
+            g_kbAction = KbAction::MJ_CUSTOM;
+            g_view = View::KEYBOARD;
+            g_dirty = true;
+            break;
         case LeafKind::BACK: if (g_stackDepth > 1) { popNode(); g_dirty = true; } break;
         case LeafKind::NONE: break;
     }
@@ -396,6 +595,33 @@ void handleEvent(encoder::InputEvent ev) {
             g_view = View::LIST;
             g_dirty = true;
         }
+        return;
+    }
+    if (g_view == View::KEYBOARD) {
+        keyboard::handleEvent(g_kbState, static_cast<uint8_t>(ev));
+        if (g_kbState.done) {
+            if (g_kbState.ok && g_kbState.len > 0) {
+                switch (g_kbAction) {
+                    case KbAction::BEACON_CUSTOM:
+                        g_wifiBeacon.setCustomSSID(g_kbState.buf);
+                        g_wifiBeacon.setCount(0);
+                        launchModule(&g_wifiBeacon);
+                        break;
+                    case KbAction::MJ_CUSTOM:
+                        g_nrfMousejack.setCustomText(g_kbState.buf);
+                        g_nrfMousejack.payloadIdx_ = 3;  // select Custom slot
+                        launchModule(&g_nrfMousejack);
+                        break;
+                    default:
+                        g_view = View::LIST;
+                        break;
+                }
+            } else {
+                g_view = View::LIST;
+            }
+            g_kbAction = KbAction::NONE;
+        }
+        g_dirty = true;
         return;
     }
 

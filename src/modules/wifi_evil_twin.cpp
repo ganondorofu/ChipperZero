@@ -58,17 +58,33 @@ static void evilTwinTask(void* arg) {
     WiFi.scanDelete();
 
     char buf[48];
-    while (self->isRunning() && !s_doTwin) {
-        if (s_apCount == 0) {
-            self->setStatus("No APs found\nBack to exit");
-        } else {
+
+    if (s_apCount == 0) {
+        self->setStatus("No APs found");
+        vTaskDelay(pdMS_TO_TICKS(1500));
+        WiFi.mode(WIFI_OFF);
+        self->clearTask();
+        vTaskDelete(nullptr);
+        return;
+    }
+
+    if (self->autoMode_) {
+        // pick the strongest AP automatically
+        uint8_t best = 0;
+        for (uint8_t i = 1; i < s_apCount; i++)
+            if (s_aps[i].rssi > s_aps[best].rssi) best = i;
+        self->scroll_ = best;
+        s_doTwin = true;
+    } else {
+        // Manual: let user scroll and confirm
+        while (self->isRunning() && !s_doTwin) {
             uint8_t idx = self->scroll_ < s_apCount ? self->scroll_ : s_apCount - 1;
             snprintf(buf, sizeof(buf), "%u/%u %ddBm Ch%u\n>%.28s",
                      idx + 1, s_apCount, s_aps[idx].rssi, s_aps[idx].channel,
                      s_aps[idx].ssid);
             self->setStatus(buf);
+            vTaskDelay(pdMS_TO_TICKS(200));
         }
-        vTaskDelay(pdMS_TO_TICKS(200));
     }
 
     if (!self->isRunning()) {

@@ -25,6 +25,14 @@ public:
 
     uint8_t channel_ = 1;  // accessed from task
 
+    // Client MAC tracking (accessed from promiscuous callback)
+    static uint8_t s_clientMacs[8][6];
+    static uint8_t s_clientCount;
+
+    static void addClientMac(const uint8_t* mac);
+    uint8_t getClientCount();
+    bool    getClientMac(uint8_t i, uint8_t mac[6]);
+
 private:
     std::atomic<bool>     running_{false};
     TaskHandle_t          task_   = nullptr;

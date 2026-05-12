@@ -32,6 +32,7 @@ void markDirty() {
 }
 
 void flush() {
+    if (ble_remote::takeNewConnectionFlag()) g_dirty = true;
     if (!g_dirty) return;
     g_u8g2.sendBuffer();
     // Mirror the OLED contents to any connected BLE client. No-op if no

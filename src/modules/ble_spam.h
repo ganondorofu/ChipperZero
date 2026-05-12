@@ -22,6 +22,7 @@ public:
     void         setType(BleSpamType t) { type_ = static_cast<uint8_t>(t); }
     BleSpamType  getType()        const { return static_cast<BleSpamType>(type_.load()); }
 
+    void onEvent(uint8_t ev) override;
     void fillStats(char* buf, size_t len) override;
 
 private:

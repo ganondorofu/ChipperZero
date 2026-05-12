@@ -14,20 +14,91 @@ IrModule g_ir;
 
 extern SemaphoreHandle_t spi_mutex;
 
-// ---- TV power codes (NEC: address, command) ---------------------------------
+// ---- TV Kill codes (NEC fast-cycle) -----------------------------------------
 struct TvCode { uint16_t addr; uint8_t cmd; const char* brand; };
 
 static const TvCode kTvCodes[] = {
-    { 0x0400, 0x08, "Samsung"   },
-    { 0x0101, 0x15, "LG"        },
-    { 0x0001, 0xA8, "Sony"      },
-    { 0xBD02, 0x00, "Panasonic" },
+    { 0x0707, 0x02, "Samsung"   },
+    { 0x0004, 0x08, "LG"        },
+    { 0x0001, 0x15, "Sony"      },
+    { 0x4004, 0x3D, "Panasonic" },
     { 0x4004, 0x08, "Sharp"     },
-    { 0x6B86, 0x3D, "Philips"   },
-    { 0x7F80, 0xC5, "Toshiba"   },
+    { 0x0000, 0x0C, "Philips"   },
+    { 0x02FD, 0x00, "Toshiba"   },
     { 0xD059, 0x00, "Vizio"     },
+    { 0x0000, 0x08, "Hisense"   },
+    { 0x0100, 0x4D, "TCL"       },
+    { 0x0154, 0x00, "Hitachi"   },
+    { 0x0090, 0x28, "Haier"     },
 };
 static constexpr uint8_t kTvCount = sizeof(kTvCodes) / sizeof(kTvCodes[0]);
+
+// ---- Preset database ---------------------------------------------------------
+// cat: 0=TV Power  1=TV Vol+  2=TV Vol-  3=TV Mute
+
+static const IrPreset kPresets[] = {
+    // ---- TV Power ----
+    {0,"Samsung",   IrProto::NEC,      0x0707, 0x02},
+    {0,"Samsung B", IrProto::NEC,      0x0400, 0x02},
+    {0,"LG",        IrProto::NEC,      0x0004, 0x08},
+    {0,"LG B",      IrProto::NEC,      0x0100, 0x08},
+    {0,"Sony",      IrProto::SONY,     0x0001, 0x15},
+    {0,"Sony B",    IrProto::SONY,     0x0001, 0x2E},
+    {0,"Panasonic", IrProto::PANASONIC,0x4004, 0x3D},
+    {0,"Sharp",     IrProto::NEC,      0x4004, 0x08},
+    {0,"Philips",   IrProto::RC6,      0x0000, 0x0C},
+    {0,"Toshiba",   IrProto::NEC,      0x02FD, 0x00},
+    {0,"Hisense",   IrProto::NEC,      0x0000, 0x08},
+    {0,"TCL",       IrProto::NEC,      0x0100, 0x4D},
+    {0,"Vizio",     IrProto::NEC,      0xD059, 0x00},
+    {0,"Hitachi",   IrProto::NEC,      0x0154, 0x00},
+    {0,"JVC",       IrProto::JVC,      0xC5E8, 0x00},
+    {0,"Haier",     IrProto::NEC,      0x0090, 0x28},
+    {0,"Mitsubishi",IrProto::NEC,      0x0A8B, 0x1E},
+    {0,"Funai",     IrProto::NEC,      0x0402, 0x08},
+    {0,"Insignia",  IrProto::NEC,      0x0000, 0x08},
+    {0,"Sanyo",     IrProto::NEC,      0x0110, 0x1A},
+    // ---- TV Vol+ ----
+    {1,"Samsung",   IrProto::NEC,      0x0707, 0x07},
+    {1,"LG",        IrProto::NEC,      0x0004, 0x02},
+    {1,"Sony",      IrProto::SONY,     0x0001, 0x12},
+    {1,"Panasonic", IrProto::PANASONIC,0x4004, 0x20},
+    {1,"Philips",   IrProto::RC6,      0x0000, 0x10},
+    {1,"Toshiba",   IrProto::NEC,      0x02FD, 0x02},
+    {1,"Sharp",     IrProto::NEC,      0x4004, 0x1A},
+    {1,"Hisense",   IrProto::NEC,      0x0000, 0x02},
+    // ---- TV Vol- ----
+    {2,"Samsung",   IrProto::NEC,      0x0707, 0x0B},
+    {2,"LG",        IrProto::NEC,      0x0004, 0x03},
+    {2,"Sony",      IrProto::SONY,     0x0001, 0x13},
+    {2,"Panasonic", IrProto::PANASONIC,0x4004, 0x21},
+    {2,"Philips",   IrProto::RC6,      0x0000, 0x11},
+    {2,"Toshiba",   IrProto::NEC,      0x02FD, 0x03},
+    {2,"Sharp",     IrProto::NEC,      0x4004, 0x1B},
+    {2,"Hisense",   IrProto::NEC,      0x0000, 0x03},
+    // ---- TV Mute ----
+    {3,"Samsung",   IrProto::NEC,      0x0707, 0x0F},
+    {3,"LG",        IrProto::NEC,      0x0004, 0x09},
+    {3,"Sony",      IrProto::SONY,     0x0001, 0x14},
+    {3,"Panasonic", IrProto::PANASONIC,0x4004, 0x4C},
+    {3,"Philips",   IrProto::RC6,      0x0000, 0x0F},
+    {3,"Toshiba",   IrProto::NEC,      0x02FD, 0x09},
+    {3,"Sharp",     IrProto::NEC,      0x4004, 0x14},
+    {3,"Hisense",   IrProto::NEC,      0x0000, 0x09},
+};
+static constexpr uint16_t kPresetCount = sizeof(kPresets) / sizeof(kPresets[0]);
+
+static void sendPreset(const IrPreset& p) {
+    switch (p.proto) {
+        case IrProto::NEC:       IrSender.sendNEC(p.address, (uint8_t)p.command, 0);       break;
+        case IrProto::SONY:      IrSender.sendSony(p.address, (uint8_t)p.command, 0);      break;
+        case IrProto::RC5:       IrSender.sendRC5(p.address, (uint8_t)p.command, 0);       break;
+        case IrProto::RC6:       IrSender.sendRC6(p.address, (uint8_t)p.command, 0);       break;
+        case IrProto::SAMSUNG:   IrSender.sendSamsung(p.address, (uint8_t)p.command, 0);   break;
+        case IrProto::PANASONIC: IrSender.sendPanasonic(p.address, (uint8_t)p.command, 0); break;
+        case IrProto::JVC:       IrSender.sendJVC(p.address, (uint8_t)p.command, 0);       break;
+    }
+}
 
 // ---- Signal storage (in-memory) ---------------------------------------------
 
@@ -140,6 +211,56 @@ static void playSignal(const IrSignal& sig) {
     }
 }
 
+// ---- Preset task ------------------------------------------------------------
+
+static void irPresetTask(void* arg) {
+    IrModule* self = reinterpret_cast<IrModule*>(arg);
+    IrSender.begin(PIN_IR_TX, false);
+
+    uint8_t cat = self->presetCat_;
+    uint32_t sent = 0;
+    char buf[48];
+
+    // build index of presets matching this category
+    uint16_t idx[kPresetCount];
+    uint16_t cnt = 0;
+    for (uint16_t i = 0; i < kPresetCount; i++)
+        if (kPresets[i].cat == cat) idx[cnt++] = i;
+
+    if (cnt == 0) {
+        self->setStatus("No presets");
+        while (self->isRunning()) vTaskDelay(pdMS_TO_TICKS(200));
+        self->clearTask();
+        vTaskDelete(nullptr);
+        return;
+    }
+
+    static const char* kCatNames[] = {"Power","Vol+","Vol-","Mute"};
+    const char* catName = (cat < 4) ? kCatNames[cat] : "?";
+
+    while (self->isRunning()) {
+        uint16_t pos = self->presetIdx_ % cnt;
+        const IrPreset& p = kPresets[idx[pos]];
+
+        if (self->presetSend_) {
+            self->presetSend_ = false;
+            for (int r = 0; r < 3; r++) {
+                sendPreset(p);
+                vTaskDelay(pdMS_TO_TICKS(100));
+            }
+            sent++;
+        }
+
+        snprintf(buf, sizeof(buf), "%s  %u/%u\n%s  %lu sent",
+                 p.brand, pos + 1, cnt, catName, (unsigned long)sent);
+        self->setStatus(buf);
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+
+    self->clearTask();
+    vTaskDelete(nullptr);
+}
+
 // ---- TV Kill task -----------------------------------------------------------
 
 static void irTvKillTask(void* arg) {
@@ -246,11 +367,14 @@ static void irReplayTask(void* arg) {
 void IrModule::start() {
     if (running_.exchange(true)) return;
     if (task_ != nullptr) { running_ = false; return; }
+    presetIdx_  = 0;
+    presetSend_ = false;
     TaskFunction_t fn = nullptr;
     switch (mode_) {
         case IrMode::TV_KILL: fn = irTvKillTask;  break;
         case IrMode::CAPTURE: fn = irCaptureTask; break;
         case IrMode::REPLAY:  fn = irReplayTask;  break;
+        case IrMode::PRESET:  fn = irPresetTask;  break;
     }
     xTaskCreatePinnedToCore(fn, "ir", 6144, this, 1, &task_, 0);
 }
@@ -263,11 +387,20 @@ void IrModule::stop() {
 }
 
 void IrModule::onEvent(uint8_t ev) {
-    if (mode_ == IrMode::REPLAY && s_sigCount > 0) {
+    if (mode_ == IrMode::PRESET) {
+        if (ev == static_cast<uint8_t>(encoder::EVENT_RIGHT))
+            presetIdx_++;
+        else if (ev == static_cast<uint8_t>(encoder::EVENT_LEFT))
+            presetIdx_ = (presetIdx_ > 0) ? presetIdx_ - 1 : 0;
+        else if (ev == static_cast<uint8_t>(encoder::EVENT_OK))
+            presetSend_ = true;
+    } else if (mode_ == IrMode::REPLAY && s_sigCount > 0) {
         if (ev == static_cast<uint8_t>(encoder::EVENT_RIGHT))
             s_replayIdx = (s_replayIdx + 1) % s_sigCount;
         else if (ev == static_cast<uint8_t>(encoder::EVENT_LEFT))
             s_replayIdx = (s_replayIdx + (uint8_t)s_sigCount - 1) % s_sigCount;
+        else if (ev == static_cast<uint8_t>(encoder::EVENT_OK))
+            playSignal(s_signals[s_replayIdx]);
     }
 }
 

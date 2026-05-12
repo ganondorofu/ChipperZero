@@ -23,9 +23,12 @@ public:
     void setStatus(const char* s);
     void startTwin();
 
-    EvilTwinState state_  = EvilTwinState::SCANNING;  // accessed from task
-    uint8_t       scroll_ = 0;
-    portMUX_TYPE  mux_    = portMUX_INITIALIZER_UNLOCKED;
+    void setAuto(bool a) { autoMode_ = a; }
+
+    EvilTwinState state_    = EvilTwinState::SCANNING;  // accessed from task
+    bool          autoMode_ = false;
+    uint8_t       scroll_   = 0;
+    portMUX_TYPE  mux_      = portMUX_INITIALIZER_UNLOCKED;
 
 private:
     std::atomic<bool> running_{false};

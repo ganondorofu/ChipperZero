@@ -1,5 +1,6 @@
 .pio/
 build/
-*.bin
 *.elf
 *.map
+*.bin
+!docs/firmware/*.bin
