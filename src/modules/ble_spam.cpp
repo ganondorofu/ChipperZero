@@ -8,8 +8,11 @@
 #include <freertos/task.h>
 
 #include "../hal/ble_remote.h"
+#include "../hal/encoder.h"
 
 BleSpamModule g_bleSpam;
+
+static const int8_t kTxDbm[8] = { -12, -9, -6, -3, 0, 3, 6, 9 };
 
 namespace {
 
@@ -50,11 +53,16 @@ static void randMac(uint8_t* mac) {
     mac[5] |= 0xC0;
 }
 
-static void bleSpamInit() {
-    NimBLEDevice::setPowerLevel(ESP_PWR_LVL_P9, ESP_BLE_PWR_TYPE_DEFAULT);
-    NimBLEDevice::setPowerLevel(ESP_PWR_LVL_P9, ESP_BLE_PWR_TYPE_ADV);
-    NimBLEDevice::setPowerLevel(ESP_PWR_LVL_P9, ESP_BLE_PWR_TYPE_SCAN);
-    esp_ble_tx_power_set(ESP_BLE_PWR_TYPE_ADV, ESP_PWR_LVL_P9);
+static void applyTxPower(uint8_t idx) {
+    auto lvl = static_cast<esp_power_level_t>(idx);
+    NimBLEDevice::setPowerLevel(lvl, ESP_BLE_PWR_TYPE_DEFAULT);
+    NimBLEDevice::setPowerLevel(lvl, ESP_BLE_PWR_TYPE_ADV);
+    NimBLEDevice::setPowerLevel(lvl, ESP_BLE_PWR_TYPE_SCAN);
+    esp_ble_tx_power_set(ESP_BLE_PWR_TYPE_ADV, lvl);
+}
+
+static void bleSpamInit(uint8_t txIdx) {
+    applyTxPower(txIdx);
     NimBLEDevice::setOwnAddrType(BLE_OWN_ADDR_RANDOM);
 
     NimBLEServer* pServer = NimBLEDevice::getServer();
@@ -259,8 +267,15 @@ void bleNativeTask(void* arg) {
     uint8_t  cursor = 0;
     uint32_t count  = 0;
     uint32_t lastReport = millis();
+    uint8_t  appliedIdx = self->getTxPowerIdx();
 
     while (self->isRunning()) {
+        // Apply TX power change if user adjusted it via encoder
+        uint8_t curIdx = self->getTxPowerIdx();
+        if (curIdx != appliedIdx) {
+            applyTxPower(curIdx);
+            appliedIdx = curIdx;
+        }
         BleSpamType t = self->getType();
         switch (t) {
             case BleSpamType::APPLE:        spamApple();        break;
@@ -311,7 +326,7 @@ void BleSpamModule::start() {
     if (running_.exchange(true)) return;
     if (task_ != nullptr) { running_ = false; return; }
     ble_remote::stop();
-    bleSpamInit();
+    bleSpamInit(txPowerIdx_.load());
     xTaskCreatePinnedToCore(bleNativeTask, "ble_spam", 8192, this, 1, &task_, 0);
 }
 
@@ -324,8 +339,18 @@ void BleSpamModule::stop() {
     ble_remote::reinit();
 }
 
-void BleSpamModule::onEvent(uint8_t ev) { (void)ev; }
+void BleSpamModule::onEvent(uint8_t ev) {
+    uint8_t idx = txPowerIdx_.load();
+    if (ev == static_cast<uint8_t>(encoder::EVENT_RIGHT)) {
+        if (idx < 7) txPowerIdx_.store(idx + 1);
+    } else if (ev == static_cast<uint8_t>(encoder::EVENT_LEFT)) {
+        if (idx > 0) txPowerIdx_.store(idx - 1);
+    }
+}
 
 void BleSpamModule::fillStats(char* buf, size_t len) {
-    snprintf(buf, len, "%lu/s", (unsigned long)adv_per_sec_.load());
+    uint8_t idx = txPowerIdx_.load();
+    int8_t  dbm = kTxDbm[idx];
+    snprintf(buf, len, "%lu/s  TX:%+ddBm",
+             (unsigned long)adv_per_sec_.load(), (int)dbm);
 }
