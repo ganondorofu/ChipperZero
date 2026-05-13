@@ -252,35 +252,31 @@ async function connect() {
     device.addEventListener('gattserverdisconnected', onDisconnected);
 
     log('GATT 接続中...');
-    const server  = await device.gatt.connect();
+    const server = await device.gatt.connect();
+    log('GATT connected, waiting 300ms...');
     await new Promise(r => setTimeout(r, 300));
+    log('getPrimaryService...');
     const service = await server.getPrimaryService(SERVICE_UUID);
-
-    // Discover all characteristics in parallel to minimize round-trip latency.
-    const [cmdCh, statusCh, fbCh, logCh] = await Promise.all([
-      service.getCharacteristic(CMD_UUID),
-      service.getCharacteristic(STATUS_UUID),
-      service.getCharacteristic(FB_UUID),
-      service.getCharacteristic(LOG_UUID),
-    ]);
+    log('service OK, getting characteristics...');
+    const cmdCh    = await service.getCharacteristic(CMD_UUID);    log('cmd OK');
+    const statusCh = await service.getCharacteristic(STATUS_UUID); log('status OK');
+    const fbCh     = await service.getCharacteristic(FB_UUID);     log('fb OK');
+    const logCh    = await service.getCharacteristic(LOG_UUID);    log('log OK');
     cmdChar = cmdCh;
 
-    // Subscribe to all notify characteristics in parallel.
-    await Promise.all([
-      statusCh.startNotifications(),
-      fbCh.startNotifications(),
-      logCh.startNotifications(),
-    ]);
+    log('startNotifications...');
+    await statusCh.startNotifications(); log('status notify OK');
+    await fbCh.startNotifications();     log('fb notify OK');
+    await logCh.startNotifications();    log('log notify OK');
     statusCh.addEventListener('characteristicvaluechanged', onStatus);
     fbCh.addEventListener('characteristicvaluechanged', onFrameChunk);
     logCh.addEventListener('characteristicvaluechanged', onDeviceLog);
     statusChar = statusCh; fbChar = fbCh; logChar = logCh;
-    log('subscribed', 'ok');
 
     setConnected(true);
     log('接続完了', 'ok');
   } catch (e) {
-    log(`接続エラー: ${e.message}`, 'err');
+    log(`接続エラー: ${e.message} [${e.name}]`, 'err');
     setConnected(false);
   }
 }
