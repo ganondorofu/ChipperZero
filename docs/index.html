@@ -247,13 +247,13 @@ async function connect() {
     log('デバイスを検索中...');
     device = await navigator.bluetooth.requestDevice({
       filters: [{ services: [SERVICE_UUID] }],
-      optionalServices: [SERVICE_UUID],
     });
     log(`選択: ${device.name || '(no name)'}`);
     device.addEventListener('gattserverdisconnected', onDisconnected);
 
     log('GATT 接続中...');
     const server  = await device.gatt.connect();
+    await new Promise(r => setTimeout(r, 300));
     const service = await server.getPrimaryService(SERVICE_UUID);
 
     // Discover all characteristics in parallel to minimize round-trip latency.
