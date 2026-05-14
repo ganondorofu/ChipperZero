@@ -18,7 +18,7 @@ IrModule g_ir;
 extern SemaphoreHandle_t spi_mutex;
 
 static IRsend g_irsend(PIN_IR_TX);
-static IRrecv g_irrecv(PIN_IR_RX, 200, 15, true);
+static IRrecv* g_irrecv = nullptr;
 
 // NEC32: standard 8-bit NEC (addr + ~addr + cmd + ~cmd), MSB-first packing
 static constexpr uint32_t NEC32(uint8_t a, uint8_t c) {
@@ -312,14 +312,15 @@ static void irTvKillTask(void* arg) {
 
 static void irCaptureTask(void* arg) {
     IrModule* self = reinterpret_cast<IrModule*>(arg);
-    g_irrecv.enableIRIn();
+    if (!g_irrecv) g_irrecv = new IRrecv(PIN_IR_RX, 200, 15, true);
+    g_irrecv->enableIRIn();
     self->setStatus("Point remote\n& press button");
 
     decode_results results;
     char buf[48];
 
     while (self->isRunning()) {
-        if (!g_irrecv.decode(&results)) {
+        if (!g_irrecv->decode(&results)) {
             vTaskDelay(pdMS_TO_TICKS(50));
             continue;
         }
@@ -343,12 +344,12 @@ static void irCaptureTask(void* arg) {
         self->setStatus(buf);
         s_sigCount++;
 
-        g_irrecv.resume();
+        g_irrecv->resume();
         vTaskDelay(pdMS_TO_TICKS(1500));
         self->setStatus("Point remote\n& press button");
     }
 
-    g_irrecv.disableIRIn();
+    g_irrecv->disableIRIn();
     self->clearTask();
     vTaskDelete(nullptr);
 }
