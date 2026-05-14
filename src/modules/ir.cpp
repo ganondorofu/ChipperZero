@@ -10,6 +10,7 @@
 #include <freertos/semphr.h>
 #include <freertos/task.h>
 
+#include "../hal/ble_remote.h"
 #include "../hal/encoder.h"
 #include "../hal/pins.h"
 
@@ -317,7 +318,13 @@ static void irTvKillTask(void* arg) {
 static void irCaptureTask(void* arg) {
     IrModule* self = reinterpret_cast<IrModule*>(arg);
     if (!g_irrecv) g_irrecv = new IRrecv(PIN_IR_RX, 200, 15, true);
-    g_irrecv->enableIRIn();
+    g_irrecv->enableIRIn(true);  // pullup=true for stable idle
+    {
+        char msg[48];
+        snprintf(msg, sizeof(msg), "[IR] Capture started GPIO%d", PIN_IR_RX);
+        ble_remote::sendLog(msg, strlen(msg));
+        Serial.println(msg);
+    }
     self->setStatus("Point remote\n& press button");
 
     decode_results results;
@@ -346,6 +353,7 @@ static void irCaptureTask(void* arg) {
                  sig.protocol, sig.address, sig.command,
                  saved ? "Saved to SD" : "In memory only");
         self->setStatus(buf);
+        ble_remote::sendLog(buf, strlen(buf));
         s_sigCount++;
 
         g_irrecv->resume();
