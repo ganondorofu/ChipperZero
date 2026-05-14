@@ -50,6 +50,8 @@ static const TvCode kTvCodes[] = {
     { NEC32(0x01,  0x4D), "TCL"       },
     { NEC32(0x01,  0x00), "Hitachi"   },
     { NEC32(0x00,  0x28), "Haier"     },
+    { NEC32(0x88,  0x02), "Xiaomi"    },
+    { NEC32(0x49,  0x3E), "Redmi TV"  },
 };
 static constexpr uint8_t kTvCount = sizeof(kTvCodes) / sizeof(kTvCodes[0]);
 
@@ -75,6 +77,8 @@ static const IrPreset kPresets[] = {
     {0,"TCL",        IrProto::NEC,      0,      NEC32(0x01,  0x4D)},
     {0,"Mitsubishi", IrProto::NEC,      0,      NEC32(0x05,  0x1E)},
     {0,"Hitachi",    IrProto::NEC,      0,      NEC32(0x01,  0x00)},
+    {0,"Xiaomi",     IrProto::NEC,      0,      NEC32(0x88,  0x02)},
+    {0,"Redmi TV",   IrProto::NEC,      0,      NEC32(0x49,  0x3E)},
     // ---- TV Vol+ ----
     {1,"Samsung",    IrProto::NEC,      0,      NEC32S(0x07, 0x07)},
     {1,"LG",         IrProto::NEC,      0,      NEC32(0x04,  0x02)},
