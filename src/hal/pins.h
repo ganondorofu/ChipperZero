@@ -31,5 +31,5 @@ constexpr int PIN_TP4056_STAT = 13;  // active-LOW (LOW = charging); needs 10k p
 constexpr int PIN_BAT_ADC     = 39;  // VBAT divider (TBD: confirm divider ratio)
 
 // --- IR ---
-constexpr int PIN_IR_TX     = 26;
+constexpr int PIN_IR_TX     = 27;
 constexpr int PIN_IR_RX     = 25;

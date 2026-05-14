@@ -82,8 +82,10 @@ bool begin(const char* deviceName) {
     if (g_initialised) return true;
 
     NimBLEDevice::init(deviceName ? deviceName : "ChipperZero");
-    NimBLEDevice::setPower(ESP_PWR_LVL_P3);  // moderate TX power to limit current draw
-    NimBLEDevice::setMTU(247);               // larger MTU so we can send 240-byte fb chunks
+    NimBLEDevice::setPower(ESP_PWR_LVL_P9);
+    NimBLEDevice::setMTU(128);
+    NimBLEDevice::setSecurityAuth(false, false, false);
+    NimBLEDevice::setSecurityIOCap(BLE_HS_IO_NO_INPUT_OUTPUT);
 
     g_server = NimBLEDevice::createServer();
     g_server->setCallbacks(&g_serverCb);
@@ -112,6 +114,8 @@ bool begin(const char* deviceName) {
 
     NimBLEAdvertising* adv = NimBLEDevice::getAdvertising();
     adv->addServiceUUID(kSvcUuid);
+    adv->setMinInterval(160);  // 100ms
+    adv->setMaxInterval(160);
     adv->enableScanResponse(true);
 
     g_initialised = true;
@@ -175,7 +179,7 @@ void sendLog(const char* msg, size_t len) {
 
 void sendFrame(const uint8_t* buf, size_t len) {    if (!g_initialised || !g_connected || !g_fbChar || !buf || len == 0) return;
 
-    constexpr size_t kChunkPayload = 240;  // fits in MTU 247 minus ATT header (3)
+    constexpr size_t kChunkPayload = 124;  // fits in MTU 128 minus ATT header (3) minus chunk-idx (1)
     uint8_t pkt[kChunkPayload + 1];
     uint8_t idx = 0;
     for (size_t off = 0; off < len; off += kChunkPayload, ++idx) {

@@ -12,11 +12,10 @@
 
 BleSpamModule g_bleSpam;
 
-static const int8_t kTxDbm[8] = { -12, -9, -6, -3, 0, 3, 6, 9 };
-
 namespace {
 
-static NimBLEAdvertising* s_adv = nullptr;
+static NimBLEAdvertising* s_adv         = nullptr;
+static int8_t             s_advTxPower  = 0;
 
 // Samsung Watch model IDs (EasySetup)
 static const uint8_t watch_models[] = {
@@ -53,16 +52,15 @@ static void randMac(uint8_t* mac) {
     mac[5] |= 0xC0;
 }
 
-static void applyTxPower(uint8_t idx) {
-    auto lvl = static_cast<esp_power_level_t>(idx);
-    NimBLEDevice::setPowerLevel(lvl, ESP_BLE_PWR_TYPE_DEFAULT);
-    NimBLEDevice::setPowerLevel(lvl, ESP_BLE_PWR_TYPE_ADV);
-    NimBLEDevice::setPowerLevel(lvl, ESP_BLE_PWR_TYPE_SCAN);
-    esp_ble_tx_power_set(ESP_BLE_PWR_TYPE_ADV, lvl);
+static void applyMaxTxPower() {
+    NimBLEDevice::setPowerLevel(ESP_PWR_LVL_P9, ESP_BLE_PWR_TYPE_DEFAULT);
+    NimBLEDevice::setPowerLevel(ESP_PWR_LVL_P9, ESP_BLE_PWR_TYPE_ADV);
+    NimBLEDevice::setPowerLevel(ESP_PWR_LVL_P9, ESP_BLE_PWR_TYPE_SCAN);
+    esp_ble_tx_power_set(ESP_BLE_PWR_TYPE_ADV, ESP_PWR_LVL_P9);
 }
 
-static void bleSpamInit(uint8_t txIdx) {
-    applyTxPower(txIdx);
+static void bleSpamInit() {
+    applyMaxTxPower();
     NimBLEDevice::setOwnAddrType(BLE_OWN_ADDR_RANDOM);
 
     NimBLEServer* pServer = NimBLEDevice::getServer();
@@ -76,12 +74,23 @@ static void bleSpamInit(uint8_t txIdx) {
 }
 
 static void sendBurst(const uint8_t* buf, size_t len) {
+    uint8_t combined[31];
+    const uint8_t* ptr  = buf;
+    size_t         total = len;
+    if (len + 3 <= 31) {
+        combined[0] = 0x02;
+        combined[1] = 0x0A;
+        combined[2] = static_cast<uint8_t>(s_advTxPower);
+        memcpy(combined + 3, buf, len);
+        ptr   = combined;
+        total = len + 3;
+    }
     for (uint8_t n = 0; n < 6; n++) {
         uint8_t rmac[6];
         randMac(rmac);
         NimBLEDevice::setOwnAddr(rmac);
         NimBLEAdvertisementData ad;
-        ad.addData(buf, len);
+        ad.addData(ptr, total);
         s_adv->setAdvertisementData(ad);
         s_adv->start();
         delay(40);
@@ -267,15 +276,9 @@ void bleNativeTask(void* arg) {
     uint8_t  cursor = 0;
     uint32_t count  = 0;
     uint32_t lastReport = millis();
-    uint8_t  appliedIdx = self->getTxPowerIdx();
 
     while (self->isRunning()) {
-        // Apply TX power change if user adjusted it via encoder
-        uint8_t curIdx = self->getTxPowerIdx();
-        if (curIdx != appliedIdx) {
-            applyTxPower(curIdx);
-            appliedIdx = curIdx;
-        }
+        s_advTxPower = self->getAdvTxPower();
         BleSpamType t = self->getType();
         switch (t) {
             case BleSpamType::APPLE:        spamApple();        break;
@@ -326,7 +329,7 @@ void BleSpamModule::start() {
     if (running_.exchange(true)) return;
     if (task_ != nullptr) { running_ = false; return; }
     ble_remote::stop();
-    bleSpamInit(txPowerIdx_.load());
+    bleSpamInit();
     xTaskCreatePinnedToCore(bleNativeTask, "ble_spam", 8192, this, 1, &task_, 0);
 }
 
@@ -340,17 +343,18 @@ void BleSpamModule::stop() {
 }
 
 void BleSpamModule::onEvent(uint8_t ev) {
-    uint8_t idx = txPowerIdx_.load();
+    int8_t v = static_cast<int8_t>(advTxPower_.load());
     if (ev == static_cast<uint8_t>(encoder::EVENT_RIGHT)) {
-        if (idx < 7) txPowerIdx_.store(idx + 1);
+        if (v < 100) v += 10;
+        advTxPower_.store(static_cast<uint8_t>(v));
     } else if (ev == static_cast<uint8_t>(encoder::EVENT_LEFT)) {
-        if (idx > 0) txPowerIdx_.store(idx - 1);
+        if (v > -100) v -= 10;
+        advTxPower_.store(static_cast<uint8_t>(v));
     }
 }
 
 void BleSpamModule::fillStats(char* buf, size_t len) {
-    uint8_t idx = txPowerIdx_.load();
-    int8_t  dbm = kTxDbm[idx];
-    snprintf(buf, len, "%lu/s  TX:%+ddBm",
-             (unsigned long)adv_per_sec_.load(), (int)dbm);
+    int8_t adv = static_cast<int8_t>(advTxPower_.load());
+    snprintf(buf, len, "%lu/s  ADV:%+ddBm",
+             (unsigned long)adv_per_sec_.load(), (int)adv);
 }

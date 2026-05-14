@@ -25,13 +25,13 @@ public:
     void onEvent(uint8_t ev) override;
     void fillStats(char* buf, size_t len) override;
 
-    uint8_t getTxPowerIdx() const { return txPowerIdx_.load(); }
+    int8_t getAdvTxPower() const { return static_cast<int8_t>(advTxPower_.load()); }
 
 private:
     std::atomic<bool>     running_{false};
-    std::atomic<uint8_t>  type_{0};       // BleSpamType::ALL
+    std::atomic<uint8_t>  type_{0};        // BleSpamType::ALL
     std::atomic<uint32_t> adv_per_sec_{0};
-    std::atomic<uint8_t>  txPowerIdx_{7}; // 0=-12dBm … 7=+9dBm (ESP_PWR_LVL_*)
+    std::atomic<uint8_t>  advTxPower_{0};  // advertised TX power in payload (signed, stored as uint8_t)
     TaskHandle_t          task_ = nullptr;
 };
 

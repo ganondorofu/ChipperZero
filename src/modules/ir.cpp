@@ -3,7 +3,10 @@
 #include <Arduino.h>
 #include <SD.h>
 #include <SPI.h>
-#include <IRremote.hpp>
+#include <IRremoteESP8266.h>
+#include <IRsend.h>
+#include <IRrecv.h>
+#include <IRutils.h>
 #include <freertos/semphr.h>
 #include <freertos/task.h>
 
@@ -14,89 +17,117 @@ IrModule g_ir;
 
 extern SemaphoreHandle_t spi_mutex;
 
-// ---- TV Kill codes (NEC fast-cycle) -----------------------------------------
-struct TvCode { uint16_t addr; uint8_t cmd; const char* brand; };
+static IRsend g_irsend(PIN_IR_TX);
+static IRrecv g_irrecv(PIN_IR_RX, 200, 15, true);
+
+// NEC32: standard 8-bit NEC (addr + ~addr + cmd + ~cmd), MSB-first packing
+static constexpr uint32_t NEC32(uint8_t a, uint8_t c) {
+    return ((uint32_t)a << 24) | ((uint32_t)(~a & 0xFF) << 16) |
+           ((uint32_t)c << 8)  | ((uint32_t)(~c & 0xFF));
+}
+// Samsung-style: addr repeated (not inverted)
+static constexpr uint32_t NEC32S(uint8_t a, uint8_t c) {
+    return ((uint32_t)a << 24) | ((uint32_t)a << 16) |
+           ((uint32_t)c << 8)  | ((uint32_t)(~c & 0xFF));
+}
+// Panasonic payload: device, subdevice, command + checksum
+static constexpr uint32_t PAN32(uint8_t dev, uint8_t sub, uint8_t cmd) {
+    return ((uint32_t)dev << 24) | ((uint32_t)sub << 16) |
+           ((uint32_t)cmd << 8)  | ((uint32_t)(dev ^ sub ^ cmd));
+}
+
+// ---- TV Kill codes ----------------------------------------------------------
+struct TvCode { uint32_t code; const char* brand; };
 
 static const TvCode kTvCodes[] = {
-    { 0x0707, 0x02, "Samsung"   },
-    { 0x0004, 0x08, "LG"        },
-    { 0x0001, 0x15, "Sony"      },
-    { 0x4004, 0x3D, "Panasonic" },
-    { 0x4004, 0x08, "Sharp"     },
-    { 0x0000, 0x0C, "Philips"   },
-    { 0x02FD, 0x00, "Toshiba"   },
-    { 0xD059, 0x00, "Vizio"     },
-    { 0x0000, 0x08, "Hisense"   },
-    { 0x0100, 0x4D, "TCL"       },
-    { 0x0154, 0x00, "Hitachi"   },
-    { 0x0090, 0x28, "Haier"     },
+    { NEC32S(0x07, 0x02), "Samsung"   },
+    { NEC32(0x04,  0x08), "LG"        },
+    { NEC32(0x02,  0x48), "Toshiba"   },
+    { NEC32(0x40,  0x12), "Toshiba B" },
+    { NEC32(0x40,  0x08), "Sharp"     },
+    { NEC32(0x00,  0x0C), "Philips"   },
+    { NEC32(0x00,  0x08), "Hisense"   },
+    { NEC32(0x01,  0x4D), "TCL"       },
+    { NEC32(0x01,  0x00), "Hitachi"   },
+    { NEC32(0x00,  0x28), "Haier"     },
 };
 static constexpr uint8_t kTvCount = sizeof(kTvCodes) / sizeof(kTvCodes[0]);
 
-// ---- Preset database ---------------------------------------------------------
-// cat: 0=TV Power  1=TV Vol+  2=TV Vol-  3=TV Mute
+// ---- Preset database --------------------------------------------------------
+// NEC entries: address=0 (unused), data=NEC32 code
+// Panasonic entries: address=0x4004 (manufacturer), data=PAN32 payload
+// Sony entries: address=bits (12/15/20), data=SIRC code value
 
 static const IrPreset kPresets[] = {
     // ---- TV Power ----
-    {0,"Samsung",   IrProto::NEC,      0x0707, 0x02},
-    {0,"Samsung B", IrProto::NEC,      0x0400, 0x02},
-    {0,"LG",        IrProto::NEC,      0x0004, 0x08},
-    {0,"LG B",      IrProto::NEC,      0x0100, 0x08},
-    {0,"Sony",      IrProto::SONY,     0x0001, 0x15},
-    {0,"Sony B",    IrProto::SONY,     0x0001, 0x2E},
-    {0,"Panasonic", IrProto::PANASONIC,0x4004, 0x3D},
-    {0,"Sharp",     IrProto::NEC,      0x4004, 0x08},
-    {0,"Philips",   IrProto::RC6,      0x0000, 0x0C},
-    {0,"Toshiba",   IrProto::NEC,      0x02FD, 0x00},
-    {0,"Hisense",   IrProto::NEC,      0x0000, 0x08},
-    {0,"TCL",       IrProto::NEC,      0x0100, 0x4D},
-    {0,"Vizio",     IrProto::NEC,      0xD059, 0x00},
-    {0,"Hitachi",   IrProto::NEC,      0x0154, 0x00},
-    {0,"JVC",       IrProto::JVC,      0xC5E8, 0x00},
-    {0,"Haier",     IrProto::NEC,      0x0090, 0x28},
-    {0,"Mitsubishi",IrProto::NEC,      0x0A8B, 0x1E},
-    {0,"Funai",     IrProto::NEC,      0x0402, 0x08},
-    {0,"Insignia",  IrProto::NEC,      0x0000, 0x08},
-    {0,"Sanyo",     IrProto::NEC,      0x0110, 0x1A},
+    {0,"Samsung",    IrProto::NEC,      0,      NEC32S(0x07, 0x02)},
+    {0,"Samsung B",  IrProto::NEC,      0,      NEC32S(0x04, 0x02)},
+    {0,"LG",         IrProto::NEC,      0,      NEC32(0x04,  0x08)},
+    {0,"LG B",       IrProto::NEC,      0,      NEC32(0x01,  0x08)},
+    {0,"Sony",       IrProto::SONY,     12,     0x0A90},
+    {0,"Toshiba",    IrProto::NEC,      0,      NEC32(0x02,  0x48)},  // confirmed
+    {0,"Toshiba B",  IrProto::NEC,      0,      NEC32(0x40,  0x12)},  // confirmed
+    {0,"Toshiba C",  IrProto::NEC,      0,      NEC32(0x02,  0x15)},
+    {0,"Panasonic",  IrProto::PANASONIC,0x4004, PAN32(0x01,0x00,0xBC)},  // confirmed
+    {0,"Panasonic B",IrProto::PANASONIC,0x4004, PAN32(0x02,0x00,0xBC)},
+    {0,"Sharp",      IrProto::NEC,      0,      NEC32(0x40,  0x08)},
+    {0,"Hisense",    IrProto::NEC,      0,      NEC32(0x00,  0x08)},
+    {0,"TCL",        IrProto::NEC,      0,      NEC32(0x01,  0x4D)},
+    {0,"Mitsubishi", IrProto::NEC,      0,      NEC32(0x05,  0x1E)},
+    {0,"Hitachi",    IrProto::NEC,      0,      NEC32(0x01,  0x00)},
     // ---- TV Vol+ ----
-    {1,"Samsung",   IrProto::NEC,      0x0707, 0x07},
-    {1,"LG",        IrProto::NEC,      0x0004, 0x02},
-    {1,"Sony",      IrProto::SONY,     0x0001, 0x12},
-    {1,"Panasonic", IrProto::PANASONIC,0x4004, 0x20},
-    {1,"Philips",   IrProto::RC6,      0x0000, 0x10},
-    {1,"Toshiba",   IrProto::NEC,      0x02FD, 0x02},
-    {1,"Sharp",     IrProto::NEC,      0x4004, 0x1A},
-    {1,"Hisense",   IrProto::NEC,      0x0000, 0x02},
+    {1,"Samsung",    IrProto::NEC,      0,      NEC32S(0x07, 0x07)},
+    {1,"LG",         IrProto::NEC,      0,      NEC32(0x04,  0x02)},
+    {1,"Sony",       IrProto::SONY,     12,     0x0490},
+    {1,"Toshiba",    IrProto::NEC,      0,      NEC32(0x02,  0x02)},
+    {1,"Panasonic",  IrProto::PANASONIC,0x4004, PAN32(0x01,0x00,0x20)},
+    {1,"Sharp",      IrProto::NEC,      0,      NEC32(0x40,  0x1A)},
+    {1,"Hisense",    IrProto::NEC,      0,      NEC32(0x00,  0x02)},
     // ---- TV Vol- ----
-    {2,"Samsung",   IrProto::NEC,      0x0707, 0x0B},
-    {2,"LG",        IrProto::NEC,      0x0004, 0x03},
-    {2,"Sony",      IrProto::SONY,     0x0001, 0x13},
-    {2,"Panasonic", IrProto::PANASONIC,0x4004, 0x21},
-    {2,"Philips",   IrProto::RC6,      0x0000, 0x11},
-    {2,"Toshiba",   IrProto::NEC,      0x02FD, 0x03},
-    {2,"Sharp",     IrProto::NEC,      0x4004, 0x1B},
-    {2,"Hisense",   IrProto::NEC,      0x0000, 0x03},
+    {2,"Samsung",    IrProto::NEC,      0,      NEC32S(0x07, 0x0B)},
+    {2,"LG",         IrProto::NEC,      0,      NEC32(0x04,  0x03)},
+    {2,"Sony",       IrProto::SONY,     12,     0x0C90},
+    {2,"Toshiba",    IrProto::NEC,      0,      NEC32(0x02,  0x03)},
+    {2,"Panasonic",  IrProto::PANASONIC,0x4004, PAN32(0x01,0x00,0x21)},
+    {2,"Sharp",      IrProto::NEC,      0,      NEC32(0x40,  0x1B)},
+    {2,"Hisense",    IrProto::NEC,      0,      NEC32(0x00,  0x03)},
     // ---- TV Mute ----
-    {3,"Samsung",   IrProto::NEC,      0x0707, 0x0F},
-    {3,"LG",        IrProto::NEC,      0x0004, 0x09},
-    {3,"Sony",      IrProto::SONY,     0x0001, 0x14},
-    {3,"Panasonic", IrProto::PANASONIC,0x4004, 0x4C},
-    {3,"Philips",   IrProto::RC6,      0x0000, 0x0F},
-    {3,"Toshiba",   IrProto::NEC,      0x02FD, 0x09},
-    {3,"Sharp",     IrProto::NEC,      0x4004, 0x14},
-    {3,"Hisense",   IrProto::NEC,      0x0000, 0x09},
+    {3,"Samsung",    IrProto::NEC,      0,      NEC32S(0x07, 0x0F)},
+    {3,"LG",         IrProto::NEC,      0,      NEC32(0x04,  0x09)},
+    {3,"Sony",       IrProto::SONY,     12,     0x1490},
+    {3,"Toshiba",    IrProto::NEC,      0,      NEC32(0x02,  0x09)},
+    {3,"Panasonic",  IrProto::PANASONIC,0x4004, PAN32(0x01,0x00,0x4C)},
+    {3,"Sharp",      IrProto::NEC,      0,      NEC32(0x40,  0x14)},
+    {3,"Hisense",    IrProto::NEC,      0,      NEC32(0x00,  0x09)},
 };
 static constexpr uint16_t kPresetCount = sizeof(kPresets) / sizeof(kPresets[0]);
 
 static void sendPreset(const IrPreset& p) {
     switch (p.proto) {
-        case IrProto::NEC:       IrSender.sendNEC(p.address, (uint8_t)p.command, 0);       break;
-        case IrProto::SONY:      IrSender.sendSony(p.address, (uint8_t)p.command, 0);      break;
-        case IrProto::RC5:       IrSender.sendRC5(p.address, (uint8_t)p.command, 0);       break;
-        case IrProto::RC6:       IrSender.sendRC6(p.address, (uint8_t)p.command, 0);       break;
-        case IrProto::SAMSUNG:   IrSender.sendSamsung(p.address, (uint8_t)p.command, 0);   break;
-        case IrProto::PANASONIC: IrSender.sendPanasonic(p.address, (uint8_t)p.command, 0); break;
-        case IrProto::JVC:       IrSender.sendJVC(p.address, (uint8_t)p.command, 0);       break;
+        case IrProto::NEC:
+            g_irsend.sendNEC((uint64_t)p.data, 32);
+            break;
+        case IrProto::SONY:
+            for (int i = 0; i < 3; i++) {
+                g_irsend.sendSony((uint64_t)p.data, (uint16_t)p.address);
+                delay(40);
+            }
+            break;
+        case IrProto::PANASONIC:
+            g_irsend.sendPanasonic((uint16_t)p.address, (uint32_t)p.data);
+            break;
+        case IrProto::RC5:
+            g_irsend.sendRC5((uint64_t)p.data, 12);
+            break;
+        case IrProto::RC6:
+            g_irsend.sendRC6((uint64_t)p.data, 20);
+            break;
+        case IrProto::SAMSUNG:
+            g_irsend.sendSAMSUNG((uint64_t)p.data, 32);
+            break;
+        case IrProto::JVC:
+            g_irsend.sendJVC((uint64_t)p.data, 16);
+            break;
     }
 }
 
@@ -126,14 +157,17 @@ static bool sdSaveSignal(const IrSignal& sig, uint8_t idx) {
     File f = SD.open(path, FILE_WRITE);
     bool ok = false;
     if (f) {
-        f.printf("proto:%u\naddr:0x%04X\ncmd:0x%02X\ntag:%s\nrawlen:%u\n",
-                 sig.protocol, sig.address, sig.command, sig.tag, sig.rawLen);
-        f.print("raw:");
-        for (uint16_t i = 0; i < sig.rawLen; i++) {
-            f.print(sig.rawBuf[i]);
-            if (i + 1 < sig.rawLen) f.print(' ');
+        f.printf("proto:%u\naddr:0x%04X\ncmd:0x%04X\nbits:%u\nval:0x%llX\ntag:%s\nrawlen:%u\n",
+                 sig.protocol, sig.address, sig.command,
+                 sig.bits, sig.value, sig.tag, sig.rawLen);
+        if (sig.rawLen > 0) {
+            f.print("raw:");
+            for (uint16_t i = 0; i < sig.rawLen; i++) {
+                f.print(sig.rawBuf[i]);
+                if (i + 1 < sig.rawLen) f.print(' ');
+            }
+            f.print('\n');
         }
-        f.print('\n');
         f.close();
         ok = true;
     }
@@ -160,16 +194,14 @@ static uint8_t sdLoadSignals() {
         while (f.available()) {
             int n = f.readBytesUntil('\n', line, sizeof(line) - 1);
             line[n] = '\0';
-            if (strncmp(line, "proto:", 6) == 0)  sig.protocol = atoi(line + 6);
-            else if (strncmp(line, "addr:", 5) == 0)
-                sig.address = (uint16_t)strtol(line + 5, nullptr, 16);
-            else if (strncmp(line, "cmd:", 4) == 0)
-                sig.command = (uint8_t)strtol(line + 4, nullptr, 16);
-            else if (strncmp(line, "tag:", 4) == 0)
-                strncpy(sig.tag, line + 4, sizeof(sig.tag) - 1);
-            else if (strncmp(line, "rawlen:", 7) == 0)
-                sig.rawLen = atoi(line + 7);
-            else if (strncmp(line, "raw:", 4) == 0) {
+            if      (strncmp(line, "proto:",  6) == 0) sig.protocol = atoi(line + 6);
+            else if (strncmp(line, "addr:",   5) == 0) sig.address  = (uint16_t)strtol(line + 5, nullptr, 16);
+            else if (strncmp(line, "cmd:",    4) == 0) sig.command  = (uint16_t)strtol(line + 4, nullptr, 16);
+            else if (strncmp(line, "bits:",   5) == 0) sig.bits     = atoi(line + 5);
+            else if (strncmp(line, "val:",    4) == 0) sig.value    = strtoull(line + 4, nullptr, 16);
+            else if (strncmp(line, "tag:",    4) == 0) strncpy(sig.tag, line + 4, sizeof(sig.tag) - 1);
+            else if (strncmp(line, "rawlen:", 7) == 0) sig.rawLen   = atoi(line + 7);
+            else if (strncmp(line, "raw:",    4) == 0) {
                 char* p = line + 4;
                 uint16_t ri = 0;
                 while (*p && ri < 256) {
@@ -198,16 +230,9 @@ void IrModule::setStatus(const char* s) {
 
 static void playSignal(const IrSignal& sig) {
     if (sig.rawLen > 0) {
-        IrSender.sendRaw(sig.rawBuf, sig.rawLen, 38);
-    } else {
-        switch (sig.protocol) {
-            case 3:  IrSender.sendNEC(sig.address, sig.command, 0);    break; // NEC
-            case 7:  IrSender.sendSony(sig.address, sig.command, 0);   break; // SONY
-            case 11: IrSender.sendRC5(sig.address, sig.command, 0);    break; // RC5
-            case 13: IrSender.sendRC6(sig.address, sig.command, 0);    break; // RC6
-            case 4:  IrSender.sendSamsung(sig.address, sig.command, 0);break; // SAMSUNG
-            default: break;
-        }
+        g_irsend.sendRaw(sig.rawBuf, sig.rawLen, 38);
+    } else if (sig.bits > 0 && sig.value != 0) {
+        g_irsend.send((decode_type_t)sig.protocol, sig.value, sig.bits);
     }
 }
 
@@ -215,13 +240,12 @@ static void playSignal(const IrSignal& sig) {
 
 static void irPresetTask(void* arg) {
     IrModule* self = reinterpret_cast<IrModule*>(arg);
-    IrSender.begin(PIN_IR_TX, false);
+    g_irsend.begin();
 
     uint8_t cat = self->presetCat_;
     uint32_t sent = 0;
     char buf[48];
 
-    // build index of presets matching this category
     uint16_t idx[kPresetCount];
     uint16_t cnt = 0;
     for (uint16_t i = 0; i < kPresetCount; i++)
@@ -246,7 +270,7 @@ static void irPresetTask(void* arg) {
             self->presetSend_ = false;
             for (int r = 0; r < 3; r++) {
                 sendPreset(p);
-                vTaskDelay(pdMS_TO_TICKS(100));
+                vTaskDelay(pdMS_TO_TICKS(80));
             }
             sent++;
         }
@@ -265,7 +289,7 @@ static void irPresetTask(void* arg) {
 
 static void irTvKillTask(void* arg) {
     IrModule* self = reinterpret_cast<IrModule*>(arg);
-    IrSender.begin(PIN_IR_TX, false);
+    g_irsend.begin();
 
     uint8_t idx = 0;
     char buf[40];
@@ -274,11 +298,11 @@ static void irTvKillTask(void* arg) {
         snprintf(buf, sizeof(buf), "-> %s", c.brand);
         self->setStatus(buf);
         for (int r = 0; r < 3 && self->isRunning(); r++) {
-            IrSender.sendNEC(c.addr, c.cmd, 0);
-            vTaskDelay(pdMS_TO_TICKS(150));
+            g_irsend.sendNEC((uint64_t)c.code, 32);
+            vTaskDelay(pdMS_TO_TICKS(120));
         }
         idx = (idx + 1) % kTvCount;
-        vTaskDelay(pdMS_TO_TICKS(50));
+        vTaskDelay(pdMS_TO_TICKS(40));
     }
     self->clearTask();
     vTaskDelete(nullptr);
@@ -288,37 +312,43 @@ static void irTvKillTask(void* arg) {
 
 static void irCaptureTask(void* arg) {
     IrModule* self = reinterpret_cast<IrModule*>(arg);
-    IrReceiver.begin(PIN_IR_RX, false);
+    g_irrecv.enableIRIn();
     self->setStatus("Point remote\n& press button");
 
-    while (self->isRunning()) {
-        if (!IrReceiver.decode()) { vTaskDelay(pdMS_TO_TICKS(50)); continue; }
+    decode_results results;
+    char buf[48];
 
-        if (s_sigCount >= 8) s_sigCount = 0;  // ring buffer
+    while (self->isRunning()) {
+        if (!g_irrecv.decode(&results)) {
+            vTaskDelay(pdMS_TO_TICKS(50));
+            continue;
+        }
+
+        if (s_sigCount >= 8) s_sigCount = 0;
         IrSignal& sig = s_signals[s_sigCount];
         memset(&sig, 0, sizeof(sig));
 
-        sig.protocol = (uint8_t)IrReceiver.decodedIRData.protocol;
-        sig.address  = IrReceiver.decodedIRData.address;
-        sig.command  = IrReceiver.decodedIRData.command;
-        sig.rawLen   = 0;  // decoded mode; raw replay uses protocol-specific sender
-
+        sig.protocol = (uint8_t)results.decode_type;
+        sig.value    = results.value;
+        sig.bits     = results.bits;
+        sig.address  = results.address;
+        sig.command  = results.command;
+        sig.rawLen   = 0;
         snprintf(sig.tag, sizeof(sig.tag), "ir_%03u", s_sigCount);
 
-        char buf[48];
         bool saved = sdSaveSignal(sig, s_sigCount);
-        snprintf(buf, sizeof(buf), "P%u A:%04X C:%02X\n%s",
+        snprintf(buf, sizeof(buf), "P%u A:%04X C:%04X\n%s",
                  sig.protocol, sig.address, sig.command,
                  saved ? "Saved to SD" : "In memory only");
         self->setStatus(buf);
-
         s_sigCount++;
-        IrReceiver.resume();
+
+        g_irrecv.resume();
         vTaskDelay(pdMS_TO_TICKS(1500));
         self->setStatus("Point remote\n& press button");
     }
 
-    IrReceiver.stop();
+    g_irrecv.disableIRIn();
     self->clearTask();
     vTaskDelete(nullptr);
 }
@@ -327,9 +357,8 @@ static void irCaptureTask(void* arg) {
 
 static void irReplayTask(void* arg) {
     IrModule* self = reinterpret_cast<IrModule*>(arg);
-    IrSender.begin(PIN_IR_TX, false);
+    g_irsend.begin();
 
-    // Load from SD first
     bool sdOk = sdInit();
     if (sdOk) {
         uint8_t loaded = sdLoadSignals();
@@ -349,7 +378,7 @@ static void irReplayTask(void* arg) {
 
     while (self->isRunning()) {
         const IrSignal& sig = s_signals[s_replayIdx];
-        snprintf(buf, sizeof(buf), "%s  %u/%u\nP%u A:%04X C:%02X",
+        snprintf(buf, sizeof(buf), "%s  %u/%u\nP%u A:%04X C:%04X",
                  sig.tag, s_replayIdx + 1, s_sigCount,
                  sig.protocol, sig.address, sig.command);
         self->setStatus(buf);
@@ -376,7 +405,7 @@ void IrModule::start() {
         case IrMode::REPLAY:  fn = irReplayTask;  break;
         case IrMode::PRESET:  fn = irPresetTask;  break;
     }
-    xTaskCreatePinnedToCore(fn, "ir", 6144, this, 1, &task_, 0);
+    xTaskCreatePinnedToCore(fn, "ir", 6144, this, 1, &task_, 1);
 }
 
 void IrModule::stop() {

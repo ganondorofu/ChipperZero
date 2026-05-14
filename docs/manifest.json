@@ -1,6 +1,7 @@
 {
   "name": "ChipperZero",
-  "version": "0.1",
+  "version": "latest",
+  "new_install_prompt_erase": true,
   "builds": [
     {
       "chipFamily": "ESP32",

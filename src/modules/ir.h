@@ -14,15 +14,17 @@ struct IrPreset {
     uint8_t     cat;      // 0=TV Power, 1=TV Vol+, 2=TV Vol-, 3=TV Mute
     const char* brand;
     IrProto     proto;
-    uint16_t    address;
-    uint16_t    command;
+    uint16_t    address;  // NEC: unused (data holds full code); Panasonic: manufacturer code
+    uint32_t    data;     // NEC: 32-bit code; Panasonic: device/cmd/checksum payload
 };
 
 // ---- IrSignal: one captured/loaded signal -----------------------------------
 struct IrSignal {
-    uint8_t  protocol;   // decode_type_t cast to uint8_t; 0 = raw
-    uint16_t address;
-    uint8_t  command;
+    uint8_t  protocol;
+    uint64_t value;      // full decoded value for replay
+    uint16_t bits;
+    uint16_t address;    // for display
+    uint16_t command;    // for display
     uint16_t rawBuf[256];
     uint16_t rawLen;
     char     tag[16];
