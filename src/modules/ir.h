@@ -25,7 +25,7 @@ struct IrSignal {
     uint16_t bits;
     uint16_t address;    // for display
     uint16_t command;    // for display
-    uint16_t rawBuf[256];
+    uint16_t rawBuf[1024];
     uint16_t rawLen;
     char     tag[16];
 };

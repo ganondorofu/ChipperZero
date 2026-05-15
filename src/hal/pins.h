@@ -18,12 +18,12 @@ constexpr int PIN_SD_CS     = 15;
 constexpr int PIN_I2C_SDA   = 21;
 constexpr int PIN_I2C_SCL   = 17;  // GPIO17 (repurposed from spare button)
 
-// --- Rotary encoder (internal pullups OK on 32/33) ---
-constexpr int PIN_ENC_A     = 33;
-constexpr int PIN_ENC_B     = 32;
+// --- Rotary encoder ---
+constexpr int PIN_ENC_A     = 25;
+constexpr int PIN_ENC_B     = 33;
 
-// --- Buttons. INPUT_PULLUP; no external resistors needed. ---
-constexpr int PIN_BTN_OK    = 14;
+// --- Buttons ---
+constexpr int PIN_BTN_OK    = 27;  // encoder push
 constexpr int PIN_BTN_BACK  = 16;
 
 // --- Power ---
@@ -31,5 +31,5 @@ constexpr int PIN_TP4056_STAT = 13;  // active-LOW (LOW = charging); needs 10k p
 constexpr int PIN_BAT_ADC     = 39;  // VBAT divider (TBD: confirm divider ratio)
 
 // --- IR ---
-constexpr int PIN_IR_TX     = 27;
-constexpr int PIN_IR_RX     = 25;
+constexpr int PIN_IR_TX     = 32;
+constexpr int PIN_IR_RX     = 26;

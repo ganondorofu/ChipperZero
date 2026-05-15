@@ -353,6 +353,9 @@ static void nfcEmulateTask(void* arg) {
 bool NfcModule::init() {
     Wire.setTimeOut(50);
     s_pn532.begin();
+    // Adafruit_I2CDevice::begin() calls Wire.begin() with default pins (SCL=22),
+    // overriding the display's Wire setup (SCL=17). Restore here.
+    Wire.begin(PIN_I2C_SDA, PIN_I2C_SCL);
     uint32_t ver = s_pn532.getFirmwareVersion();
     if (!ver) { available_ = false; return false; }
     s_pn532.SAMConfig();
