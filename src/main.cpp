@@ -201,6 +201,7 @@ void setup() {
     g_bleSpam.init();
     bootScreen("NFC...");
     g_nfc.init();
+    display::reinit();  // NFC resets Wire; restore I2C pins and OLED
     bootScreen("IR...");
     g_ir.init();
     bootScreen("WiFi...");

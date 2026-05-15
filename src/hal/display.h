@@ -6,6 +6,9 @@ namespace display {
 
 bool begin();
 
+// Wire.end()+Wire.begin()+initDisplay() — call after any module that resets Wire.
+void reinit();
+
 // Get the underlying U8g2 instance for drawing. Always call markDirty()
 // after issuing draw commands so flush() actually pushes the buffer.
 U8G2& u8g2();

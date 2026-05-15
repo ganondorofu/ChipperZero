@@ -1,5 +1,6 @@
 #include "display.h"
 
+#include <Wire.h>
 #include "ble_remote.h"
 #include "pins.h"
 
@@ -21,6 +22,14 @@ bool begin() {
     g_u8g2.sendBuffer();
     g_dirty = false;
     return ok;
+}
+
+void reinit() {
+    Wire.end();
+    Wire.begin(PIN_I2C_SDA, PIN_I2C_SCL);
+    g_u8g2.setBusClock(100000);
+    g_u8g2.initDisplay();
+    g_dirty = true;
 }
 
 U8G2& u8g2() {
