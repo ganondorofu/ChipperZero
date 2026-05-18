@@ -123,6 +123,7 @@ static bool sdLoadCard(uint8_t idx, NfcCard& card) {
 
 static void nfcReadTask(void* arg) {
     NfcModule* self = reinterpret_cast<NfcModule*>(arg);
+    s_pn532.SAMConfig();
     self->setStatus("Waiting for tag...");
 
     // Find next save slot
@@ -324,8 +325,8 @@ static void nfcEmulateTask(void* arg) {
 
         if (!s_card.isClassic) {
             // Handle Ultralight READ PAGE commands from reader
-            uint8_t resp[32];
-            uint8_t respLen = sizeof(resp);
+            uint8_t resp[32] = {};
+            uint8_t respLen = 0;
             uint8_t getCmd[2] = {PN532_CMD_TGGETDATA, 0x01};
             if (s_pn532.sendCommandCheckAck(getCmd, 2, 500)) {
                 // PN532 received data from reader — parse and respond
@@ -348,15 +349,89 @@ static void nfcEmulateTask(void* arg) {
     vTaskDelete(nullptr);
 }
 
+// ---- Suica balance task -----------------------------------------------------
+
+static const char* felicaCardName(uint16_t sysCode) {
+    switch (sysCode) {
+        case 0x88B4: return "Suica";
+        case 0x88B6: return "PASMO";
+        case 0x88D1: return "ICOCA";
+        case 0x88A0: return "Kitaca";
+        case 0x8A0C: return "Hayakaken";
+        case 0x8145: return "nimoca";
+        case 0x8B5D: return "manaca";
+        case 0x88B7: return "WAON";
+        case 0x88C1: return "nanaco";
+        case 0xFE00: return "Edy";
+        case 0x0003: return "IC Card";
+        default:     return "FeliCa";
+    }
+}
+
+static void nfcSuicaTask(void* arg) {
+    NfcModule* self = reinterpret_cast<NfcModule*>(arg);
+    s_pn532.SAMConfig();
+    self->setStatus("IC/FeliCa: tap...");
+
+    while (self->isRunning()) {
+        uint8_t idm[8] = {};
+        uint8_t pmm[8] = {};
+        uint16_t sysCode = 0;
+
+        // Poll for any FeliCa card (0xFFFF = any)
+        if (!s_pn532.felica_Poll(0xFF, 0xFF, idm, pmm, &sysCode)) {
+            vTaskDelay(pdMS_TO_TICKS(300));
+            continue;
+        }
+        if (!self->isRunning()) break;
+
+        const char* cardName = felicaCardName(sysCode);
+
+        // Debug output
+        Serial.printf("[NFC] SysCode: %04X  Card: %s\n", sysCode, cardName);
+        Serial.printf("[NFC] IDm: %02X%02X%02X%02X%02X%02X%02X%02X\n",
+                      idm[0], idm[1], idm[2], idm[3],
+                      idm[4], idm[5], idm[6], idm[7]);
+
+        // Try to read SF balance (service 0x008B, block 0)
+        uint8_t block[16] = {};
+        bool ok = s_pn532.felica_ReadWithoutEncryption(idm, 0x008B, 0, block);
+
+        if (ok) {
+            Serial.print("[NFC] Block0(0x008B): ");
+            for (int i = 0; i < 16; i++) Serial.printf("%02X ", block[i]);
+            Serial.println();
+        }
+
+        char buf[48];
+        if (ok) {
+            // Balance at bytes 10-11, little-endian (JPY)
+            uint16_t balance = (uint16_t)block[10] | ((uint16_t)block[11] << 8);
+            snprintf(buf, sizeof(buf), "%s\n\xA5%u", cardName, (unsigned)balance);
+        } else {
+            snprintf(buf, sizeof(buf), "%s\nNo balance svc", cardName);
+        }
+        self->setStatus(buf);
+
+        // Wait before next poll
+        vTaskDelay(pdMS_TO_TICKS(2500));
+        self->setStatus("IC/FeliCa: tap...");
+    }
+
+    self->clearTask();
+    vTaskDelete(nullptr);
+}
+
 // ---- IModule ----------------------------------------------------------------
 
 bool NfcModule::init() {
-    Wire.setTimeOut(50);
     s_pn532.begin();
-    // Adafruit_I2CDevice::begin() calls Wire.begin() with no args (SCL=22 default),
-    // overriding SCL=17. Wire.end() + Wire.begin() forces full pin reconfiguration.
+    // s_pn532.begin() calls Wire.begin() with default pins (SCL=22).
+    // Wire.end() + Wire.begin() forces full reconfiguration to correct pins.
     Wire.end();
     Wire.begin(PIN_I2C_SDA, PIN_I2C_SCL);
+    Wire.setTimeOut(200);
+    delay(20);
     uint32_t ver = s_pn532.getFirmwareVersion();
     if (!ver) { available_ = false; return false; }
     s_pn532.SAMConfig();
@@ -372,6 +447,7 @@ void NfcModule::start() {
         case NfcMode::READ:    fn = nfcReadTask;    break;
         case NfcMode::WRITE:   fn = nfcWriteTask;   break;
         case NfcMode::EMULATE: fn = nfcEmulateTask; break;
+        case NfcMode::SUICA:   fn = nfcSuicaTask;   break;
     }
     xTaskCreatePinnedToCore(fn, "nfc", 8192, this, 1, &task_, 0);
 }

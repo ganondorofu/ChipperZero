@@ -6,7 +6,7 @@
 
 #include "module_base.h"
 
-enum class NfcMode : uint8_t { READ, WRITE, EMULATE };
+enum class NfcMode : uint8_t { READ, WRITE, EMULATE, SUICA };
 
 // ---- NfcCard: one read/loaded card ------------------------------------------
 struct NfcCard {

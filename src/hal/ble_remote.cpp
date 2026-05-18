@@ -4,6 +4,7 @@
 #include <NimBLEDevice.h>
 
 #include "encoder.h"
+#include "../modules/wifi_manager.h"
 
 namespace ble_remote {
 
@@ -21,18 +22,20 @@ namespace ble_remote {
 //     packet[0] = chunk index (0..4); packet[1..] = up to 240 bytes of pixel data.
 //   Index 0 starts a new frame; index 4 is the last chunk.
 
-constexpr const char* kSvcUuid    = "c4b1e000-7a66-4c12-9c69-d2f8c4a3f100";
-constexpr const char* kCmdUuid    = "c4b1e001-7a66-4c12-9c69-d2f8c4a3f100";
-constexpr const char* kStatusUuid = "c4b1e002-7a66-4c12-9c69-d2f8c4a3f100";
-constexpr const char* kFbUuid     = "c4b1e003-7a66-4c12-9c69-d2f8c4a3f100";
-constexpr const char* kLogUuid    = "c4b1e004-7a66-4c12-9c69-d2f8c4a3f100";
+constexpr const char* kSvcUuid     = "c4b1e000-7a66-4c12-9c69-d2f8c4a3f100";
+constexpr const char* kCmdUuid     = "c4b1e001-7a66-4c12-9c69-d2f8c4a3f100";
+constexpr const char* kStatusUuid  = "c4b1e002-7a66-4c12-9c69-d2f8c4a3f100";
+constexpr const char* kFbUuid      = "c4b1e003-7a66-4c12-9c69-d2f8c4a3f100";
+constexpr const char* kLogUuid     = "c4b1e004-7a66-4c12-9c69-d2f8c4a3f100";
+constexpr const char* kWifiCfgUuid = "c4b1e005-7a66-4c12-9c69-d2f8c4a3f100";
 
 namespace {
 
-NimBLEServer*         g_server     = nullptr;
-NimBLECharacteristic* g_statusChar = nullptr;
-NimBLECharacteristic* g_fbChar     = nullptr;
-NimBLECharacteristic* g_logChar    = nullptr;
+NimBLEServer*         g_server      = nullptr;
+NimBLECharacteristic* g_statusChar  = nullptr;
+NimBLECharacteristic* g_fbChar      = nullptr;
+NimBLECharacteristic* g_logChar     = nullptr;
+NimBLECharacteristic* g_wifiCfgChar = nullptr;
 bool g_initialised      = false;
 bool g_enabled          = false;
 bool g_connected        = false;
@@ -73,8 +76,32 @@ class ServerCallbacks : public NimBLEServerCallbacks {
     }
 };
 
-CmdCallbacks    g_cmdCb;
-ServerCallbacks g_serverCb;
+static void wifiCfgUpdateValue() {
+    if (!g_wifiCfgChar) return;
+    char buf[48];
+    g_wifiManager.fillStats(buf, sizeof(buf));
+    for (char* p = buf; *p; p++) if (*p == '\n') *p = ',';
+    g_wifiCfgChar->setValue(buf);
+}
+
+class WifiCfgCallbacks : public NimBLECharacteristicCallbacks {
+    void onWrite(NimBLECharacteristic* c, NimBLEConnInfo& /*info*/) override {
+        std::string v = c->getValue();
+        if (v.empty()) return;
+        // Protocol: byte[0]=mode(0-3), byte[1..32]=SSID, byte[33..96]=password
+        WifiMgrMode mode = static_cast<WifiMgrMode>(v[0] & 0x03);
+        char ssid[33] = {};
+        char pass[64] = {};
+        if (v.size() > 1)  strncpy(ssid, v.c_str() + 1,  32);
+        if (v.size() > 33) strncpy(pass, v.c_str() + 33, 63);
+        g_wifiManager.configure(mode, ssid, pass);
+        wifiCfgUpdateValue();
+    }
+};
+
+CmdCallbacks     g_cmdCb;
+WifiCfgCallbacks g_wifiCfgCb;
+ServerCallbacks  g_serverCb;
 
 }  // namespace
 
@@ -109,6 +136,12 @@ bool begin(const char* deviceName) {
     g_logChar = svc->createCharacteristic(
         kLogUuid,
         NIMBLE_PROPERTY::NOTIFY);
+
+    g_wifiCfgChar = svc->createCharacteristic(
+        kWifiCfgUuid,
+        NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR | NIMBLE_PROPERTY::READ);
+    g_wifiCfgChar->setCallbacks(&g_wifiCfgCb);
+    wifiCfgUpdateValue();
 
     svc->start();
 
@@ -146,13 +179,14 @@ void stop() {
 void setEnabled(bool on) { on ? start() : stop(); }
 
 void reinit(const char* deviceName) {
-    g_initialised = false;
-    g_enabled     = false;
-    g_connected   = false;
-    g_server      = nullptr;
-    g_statusChar  = nullptr;
-    g_fbChar      = nullptr;
-    g_logChar     = nullptr;
+    g_initialised  = false;
+    g_enabled      = false;
+    g_connected    = false;
+    g_server       = nullptr;
+    g_statusChar   = nullptr;
+    g_fbChar       = nullptr;
+    g_logChar      = nullptr;
+    g_wifiCfgChar  = nullptr;
     begin(deviceName);
     start();
 }

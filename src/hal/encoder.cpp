@@ -37,19 +37,18 @@ InputEvent pollEncoder() {
     uint8_t cur = readEncState();
     if (cur == g_lastEncState) return EVENT_NONE;
 
-    static const int8_t kDelta[16] = {
-         0, -1, +1,  0,
-        +1,  0,  0, -1,
-        -1,  0,  0, +1,
-         0, +1, -1,  0,
-    };
-    static int8_t accum = 0;
-    accum += kDelta[(g_lastEncState << 2) | cur];
+    uint8_t prev = g_lastEncState;
     g_lastEncState = cur;
 
-    if (accum >= 4)  { accum = 0; return EVENT_RIGHT; }
-    if (accum <= -4) { accum = 0; return EVENT_LEFT; }
-    if (accum > 8 || accum < -8) accum = 0;
+    bool prevA = (prev >> 1) & 1;
+    bool curA  = (cur  >> 1) & 1;
+    bool prevB = prev & 1;
+    bool curB  = cur  & 1;
+
+    // Fire only on A falling edge; direction from B state
+    if (prevA == 1 && curA == 0) {
+        return curB ? EVENT_RIGHT : EVENT_LEFT;
+    }
     return EVENT_NONE;
 }
 

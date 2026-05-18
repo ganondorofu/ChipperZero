@@ -189,23 +189,42 @@
   </div>
 
   <div class="panel">
+    <div class="hint" style="margin-bottom:6px;">WiFi 設定</div>
+    <div id="wifi-status" style="font-size:12px;color:var(--muted);margin-bottom:8px;">---</div>
+    <select id="wifi-mode" onchange="wifiModeChange()" style="width:100%;background:#2c313b;border:1px solid #444;border-radius:6px;color:var(--text);padding:10px 8px;font-size:14px;margin-bottom:8px;">
+      <option value="0">Off</option>
+      <option value="1">AP (ChipperZero / chipperzero)</option>
+      <option value="2">STA (WiFiに接続)</option>
+      <option value="3">AP + STA</option>
+    </select>
+    <div id="wifi-sta-fields" style="display:none;margin-bottom:8px;">
+      <input id="wifi-ssid" type="text" placeholder="SSID" maxlength="32"
+        style="width:100%;background:#2c313b;border:1px solid #444;border-radius:6px;color:var(--text);padding:10px 8px;font-size:14px;margin-bottom:6px;box-sizing:border-box;">
+      <input id="wifi-pass" type="password" placeholder="Password" maxlength="63"
+        style="width:100%;background:#2c313b;border:1px solid #444;border-radius:6px;color:var(--text);padding:10px 8px;font-size:14px;box-sizing:border-box;">
+    </div>
+    <button id="wifi-apply" disabled onclick="wifiApply()">WiFi 適用</button>
+  </div>
+
+  <div class="panel">
     <div class="hint" style="margin-bottom:6px;">ログ</div>
     <div id="log" class="log"></div>
   </div>
 </div>
 
 <script>
-const SERVICE_UUID = 'c4b1e000-7a66-4c12-9c69-d2f8c4a3f100';
-const CMD_UUID     = 'c4b1e001-7a66-4c12-9c69-d2f8c4a3f100';
-const STATUS_UUID  = 'c4b1e002-7a66-4c12-9c69-d2f8c4a3f100';
-const FB_UUID      = 'c4b1e003-7a66-4c12-9c69-d2f8c4a3f100';
-const LOG_UUID     = 'c4b1e004-7a66-4c12-9c69-d2f8c4a3f100';
+const SERVICE_UUID  = 'c4b1e000-7a66-4c12-9c69-d2f8c4a3f100';
+const CMD_UUID      = 'c4b1e001-7a66-4c12-9c69-d2f8c4a3f100';
+const STATUS_UUID   = 'c4b1e002-7a66-4c12-9c69-d2f8c4a3f100';
+const FB_UUID       = 'c4b1e003-7a66-4c12-9c69-d2f8c4a3f100';
+const LOG_UUID      = 'c4b1e004-7a66-4c12-9c69-d2f8c4a3f100';
+const WIFI_CFG_UUID = 'c4b1e005-7a66-4c12-9c69-d2f8c4a3f100';
 
 const OP_NAMES = { 1: 'LEFT', 2: 'RIGHT', 3: 'OK', 4: 'BACK' };
 const FB_LEN   = 1024;
 const FB_CHUNK = 124;
 
-let device = null, cmdChar = null, statusChar = null, fbChar = null, logChar = null;
+let device = null, cmdChar = null, statusChar = null, fbChar = null, logChar = null, wifiCfgChar = null;
 const fbBuf = new Uint8Array(FB_LEN);
 let frameCount = 0, lastFpsCalcAt = 0, lastFpsFrames = 0;
 
@@ -236,6 +255,7 @@ function setConnected(connected) {
   $('btn-connect').disabled = connected;
   $('btn-disconnect').disabled = !connected;
   document.querySelectorAll('.pad button').forEach(b => b.disabled = !connected);
+  $('wifi-apply').disabled = !connected;
 }
 
 async function connect() {
@@ -273,6 +293,14 @@ async function connect() {
     logCh.addEventListener('characteristicvaluechanged', onDeviceLog);
     statusChar = statusCh; fbChar = fbCh; logChar = logCh;
 
+    try {
+      const wifiCh = await service.getCharacteristic(WIFI_CFG_UUID);
+      wifiCfgChar = wifiCh;
+      const val = await wifiCh.readValue();
+      $('wifi-status').textContent = new TextDecoder().decode(val);
+      log('WiFi char OK', 'ok');
+    } catch(e) { log(`WiFi char: ${e.message}`, 'err'); }
+
     setConnected(true);
     log('接続完了', 'ok');
   } catch (e) {
@@ -287,7 +315,8 @@ function disconnect() {
 
 function onDisconnected() {
   log('切断されました', 'err');
-  cmdChar = statusChar = fbChar = logChar = null;
+  cmdChar = statusChar = fbChar = logChar = wifiCfgChar = null;
+  $('wifi-status').textContent = '---';
   setConnected(false);
 }
 
@@ -359,6 +388,36 @@ async function sendOp(op) {
     log(`TX ${OP_NAMES[op]} (0x0${op})`, 'tx');
   } catch (e) {
     log(`送信エラー: ${e.message}`, 'err');
+  }
+}
+
+function wifiModeChange() {
+  const m = parseInt($('wifi-mode').value);
+  $('wifi-sta-fields').style.display = (m === 2 || m === 3) ? '' : 'none';
+}
+
+async function wifiApply() {
+  if (!wifiCfgChar) return;
+  const mode = parseInt($('wifi-mode').value);
+  const ssid = $('wifi-ssid').value;
+  const pass = $('wifi-pass').value;
+  const buf = new Uint8Array(97);
+  buf[0] = mode;
+  const enc = new TextEncoder();
+  buf.set(enc.encode(ssid).slice(0, 32), 1);
+  buf.set(enc.encode(pass).slice(0, 63), 33);
+  try {
+    await wifiCfgChar.writeValue(buf);
+    log(`WiFi設定送信: mode=${['Off','AP','STA','AP+STA'][mode]} ssid=${ssid||'(none)'}`, 'tx');
+    // Read back status after WiFi applies (2s delay for AP/STA to come up)
+    setTimeout(async () => {
+      try {
+        const val = await wifiCfgChar.readValue();
+        $('wifi-status').textContent = new TextDecoder().decode(val);
+      } catch(e) {}
+    }, 2500);
+  } catch(e) {
+    log(`WiFi送信エラー: ${e.message}`, 'err');
   }
 }
 

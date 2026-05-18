@@ -18,6 +18,7 @@
 #include "modules/wifi_beacon_clone.h"
 #include "modules/wifi_evil_portal.h"
 #include "modules/wifi_spectrum.h"
+#include "modules/wifi_manager.h"
 #include "modules/nrf_mousejack.h"
 #include "ui/menu.h"
 
@@ -45,7 +46,7 @@ static const char* kArt[] = {
 };
 
 static uint8_t g_bootStep  = 0;
-static uint8_t g_bootTotal = 14;
+static uint8_t g_bootTotal = 12;
 
 static void bootScreen(const char* msg) {
     auto& g = display::u8g2();
@@ -209,6 +210,7 @@ void setup() {
     g_wifiBeaconClone.init();
     g_wifiEvilPortal.init();
     g_wifiSpectrum.init();
+    g_wifiManager.init();
     bootScreen("Storage...");
     g_storage.init();
     bootScreen("BLE Remote...");

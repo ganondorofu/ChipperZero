@@ -94,10 +94,10 @@ void drawModuleRunning(IModule* module) {
         *nl = '\0';
         g.drawStr(0, kStatusBarH + 12, stats[0] ? stats : "Running...");
         g.drawStr(0, kStatusBarH + 25, nl + 1);
-        g.drawStr(0, kStatusBarH + 38, "<> scroll  OK:stop");
+        g.drawStr(0, kStatusBarH + 38, "<> scroll  holdOK:stop");
     } else {
         g.drawStr(0, kStatusBarH + 12, stats[0] ? stats : "Running...");
-        g.drawStr(0, kStatusBarH + 25, "<> type  OK:stop");
+        g.drawStr(0, kStatusBarH + 25, "<> adj  holdOK:stop");
     }
     display::markDirty();
 }

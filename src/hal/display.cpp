@@ -16,6 +16,7 @@ constexpr size_t kFrameBytes = 128 * 64 / 8;
 }  // namespace
 
 bool begin() {
+    Wire.end();
     bool ok = g_u8g2.begin();
     g_u8g2.setBusClock(100000);
     g_u8g2.clearBuffer();
@@ -28,7 +29,9 @@ void reinit() {
     Wire.end();
     Wire.begin(PIN_I2C_SDA, PIN_I2C_SCL);
     g_u8g2.setBusClock(100000);
-    g_u8g2.initDisplay();
+    g_u8g2.begin();
+    g_u8g2.clearBuffer();
+    g_u8g2.sendBuffer();
     g_dirty = true;
 }
 

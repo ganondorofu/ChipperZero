@@ -31,7 +31,7 @@ private:
     std::atomic<bool>     running_{false};
     std::atomic<uint8_t>  type_{0};        // BleSpamType::ALL
     std::atomic<uint32_t> adv_per_sec_{0};
-    std::atomic<uint8_t>  advTxPower_{0};  // advertised TX power in payload (signed, stored as uint8_t)
+    std::atomic<uint8_t>  advTxPower_{127};  // advertised TX power in payload (signed, stored as uint8_t)
     TaskHandle_t          task_ = nullptr;
 };
 

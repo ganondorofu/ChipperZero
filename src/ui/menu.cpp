@@ -20,6 +20,7 @@
 #include "../modules/wifi_sniffer.h"
 #include "../modules/wifi_evil_portal.h"
 #include "../modules/wifi_spectrum.h"
+#include "../modules/wifi_manager.h"
 #include "../modules/nrf_jammer.h"
 #include "../modules/nrf_mousejack.h"
 #include "screen.h"
@@ -116,16 +117,18 @@ struct SpamProxy : public IModule {
         }
     }
 
-    void onEvent(uint8_t) override {}
+    void onEvent(uint8_t ev) override {
+        if (radio_ == Radio::ESP || radio_ == Radio::DUAL) g_bleSpam.onEvent(ev);
+    }
 
     void fillStats(char* buf, size_t len) override {
-        char stats[12] = "";
+        char stats[48] = "";
         if (radio_ == Radio::ESP) {
             g_bleSpam.fillStats(stats, sizeof(stats));
         } else if (radio_ == Radio::NRF) {
             g_nrfBleSpam.fillStats(stats, sizeof(stats));
         } else {
-            char a[6], b[6];
+            char a[24], b[24];
             g_bleSpam.fillStats(a, sizeof(a));
             g_nrfBleSpam.fillStats(b, sizeof(b));
             snprintf(stats, sizeof(stats), "E:%s N:%s", a, b);
@@ -241,11 +244,12 @@ const Node kBleNode = {"BLE Spam", kBleItems, sizeof(kBleItems)/sizeof(kBleItems
 
 // ---- System submenu ---------------------------------------------------------
 const Item kSysItems[] = {
-    {"Battery",    nullptr, nullptr, LeafKind::INFO_BATTERY      },
-    {"BLE Remote", nullptr, nullptr, LeafKind::TOGGLE_BLE_REMOTE },
-    {"Keyboard",   nullptr, nullptr, LeafKind::OPEN_KEYBOARD     },
-    {"About",      nullptr, nullptr, LeafKind::INFO_ABOUT        },
-    {"Back",       nullptr, nullptr, LeafKind::BACK              },
+    {"Battery",      nullptr, nullptr,        LeafKind::INFO_BATTERY      },
+    {"BLE Remote",   nullptr, nullptr,        LeafKind::TOGGLE_BLE_REMOTE },
+    {"Keyboard",     nullptr, nullptr,        LeafKind::OPEN_KEYBOARD     },
+    {"WiFi Manager", nullptr, &g_wifiManager, LeafKind::MODULE            },
+    {"About",        nullptr, nullptr,        LeafKind::INFO_ABOUT        },
+    {"Back",         nullptr, nullptr,        LeafKind::BACK              },
 };
 const Node kSysNode = {"System", kSysItems, sizeof(kSysItems)/sizeof(kSysItems[0])};
 
@@ -316,6 +320,7 @@ struct NfcProxy : public IModule {
 static NfcProxy s_nfcRead   (NfcMode::READ,    "NFC Read");
 static NfcProxy s_nfcWrite  (NfcMode::WRITE,   "NFC Clone");
 static NfcProxy s_nfcEmulate(NfcMode::EMULATE, "NFC Emulate");
+static NfcProxy s_nfcSuica  (NfcMode::SUICA,   "Suica Balance");
 
 // ---- IR submenu -------------------------------------------------------------
 
@@ -331,10 +336,11 @@ const Node kIrNode = {"IR", kIrItems, sizeof(kIrItems)/sizeof(kIrItems[0])};
 // ---- NFC submenu ------------------------------------------------------------
 
 const Item kNfcItems[] = {
-    {"Read/Save", nullptr, &s_nfcRead,    LeafKind::MODULE},
-    {"Clone",     nullptr, &s_nfcWrite,   LeafKind::MODULE},
-    {"Emulate",   nullptr, &s_nfcEmulate, LeafKind::MODULE},
-    {"Back",      nullptr, nullptr,       LeafKind::BACK  },
+    {"Read/Save",    nullptr, &s_nfcRead,    LeafKind::MODULE},
+    {"Clone",        nullptr, &s_nfcWrite,   LeafKind::MODULE},
+    {"Emulate",      nullptr, &s_nfcEmulate, LeafKind::MODULE},
+    {"Suica Balance",nullptr, &s_nfcSuica,   LeafKind::MODULE},
+    {"Back",         nullptr, nullptr,       LeafKind::BACK  },
 };
 const Node kNfcNode = {"NFC", kNfcItems, sizeof(kNfcItems)/sizeof(kNfcItems[0])};
 

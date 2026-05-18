@@ -19,11 +19,11 @@ constexpr int PIN_I2C_SDA   = 21;
 constexpr int PIN_I2C_SCL   = 17;  // GPIO17 (repurposed from spare button)
 
 // --- Rotary encoder ---
-constexpr int PIN_ENC_A     = 25;
+constexpr int PIN_ENC_A     = 32;
 constexpr int PIN_ENC_B     = 33;
 
 // --- Buttons ---
-constexpr int PIN_BTN_OK    = 27;  // encoder push
+constexpr int PIN_BTN_OK    = 14;  // encoder push
 constexpr int PIN_BTN_BACK  = 16;
 
 // --- Power ---
@@ -31,5 +31,5 @@ constexpr int PIN_TP4056_STAT = 13;  // active-LOW (LOW = charging); needs 10k p
 constexpr int PIN_BAT_ADC     = 39;  // VBAT divider (TBD: confirm divider ratio)
 
 // --- IR ---
-constexpr int PIN_IR_TX     = 32;
-constexpr int PIN_IR_RX     = 26;
+constexpr int PIN_IR_TX     = 26;
+constexpr int PIN_IR_RX     = 27;

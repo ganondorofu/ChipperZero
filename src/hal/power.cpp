@@ -15,20 +15,27 @@ uint8_t getBatteryPercent() {
     // VBAT range: 3.0V–4.2V → ADC range: 1.5V–2.1V
     // ESP32 ADC: 12-bit, 3.3V ref → ADC_in = V * 4095 / 3.3
     // 1.5V → 1861,  2.1V → 2606
-    // Oversample 8× to reduce noise.
-    constexpr int SAMPLES   = 8;
-    constexpr int ADC_MIN   = 1861;  // 3.0V battery
-    constexpr int ADC_MAX   = 2606;  // 4.2V battery
+    // Oversample 8× to reduce noise. Cache 1s to avoid ADC reads every frame.
+    constexpr int      SAMPLES  = 8;
+    constexpr int      ADC_MIN  = 1861;
+    constexpr int      ADC_MAX  = 2606;
+    constexpr uint32_t CACHE_MS = 1000;
+
+    static uint8_t  cached  = 50;
+    static uint32_t lastMs  = 0xFFFFFFFF;
+
+    uint32_t now = millis();
+    if (now - lastMs < CACHE_MS) return cached;
+    lastMs = now;
 
     long sum = 0;
-    for (int i = 0; i < SAMPLES; i++) {
-        sum += analogRead(PIN_BAT_ADC);
-    }
+    for (int i = 0; i < SAMPLES; i++) sum += analogRead(PIN_BAT_ADC);
     int adc = (int)(sum / SAMPLES);
 
-    if (adc <= ADC_MIN) return 0;
-    if (adc >= ADC_MAX) return 100;
-    return (uint8_t)(((long)(adc - ADC_MIN) * 100) / (ADC_MAX - ADC_MIN));
+    if (adc <= ADC_MIN) { cached = 0;   return 0; }
+    if (adc >= ADC_MAX) { cached = 100; return 100; }
+    cached = (uint8_t)(((long)(adc - ADC_MIN) * 100) / (ADC_MAX - ADC_MIN));
+    return cached;
 }
 
 bool isCharging() {
