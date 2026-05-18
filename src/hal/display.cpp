@@ -53,4 +53,8 @@ void flush() {
     g_dirty = false;
 }
 
+void setSleep(bool on) {
+    g_u8g2.setPowerSave(on ? 1 : 0);
+}
+
 }  // namespace display

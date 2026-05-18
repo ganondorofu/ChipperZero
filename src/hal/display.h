@@ -18,4 +18,7 @@ void markDirty();
 // Push the framebuffer over I2C only when something has changed (~20ms transfer).
 void flush();
 
+// Turn the OLED panel on (false) or off (true). Does not affect the buffer.
+void setSleep(bool on);
+
 }  // namespace display

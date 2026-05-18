@@ -3,6 +3,7 @@
 #include <Arduino.h>
 
 #include "../hal/ble_remote.h"
+#include "../hal/display.h"
 #include "../hal/encoder.h"
 #include "../modules/ble_spam.h"
 #include "../modules/ble_spam_types.h"
@@ -666,12 +667,36 @@ void begin() {
 
 void update() {
     encoder::InputEvent ev = encoder::tick();
+
+    // ---- Display sleep management -------------------------------------------
+    constexpr uint32_t kSleepMs = 60000;  // 1 minute
+    static uint32_t lastActivityMs = 0;
+    static bool     sleeping       = false;
+
+    uint32_t now = millis();
+    if (ev != encoder::EVENT_NONE) {
+        if (sleeping) {
+            // First input after sleep: wake display, discard the event.
+            display::setSleep(false);
+            display::markDirty();
+            sleeping       = false;
+            lastActivityMs = now;
+            ev             = encoder::EVENT_NONE;
+        } else {
+            lastActivityMs = now;
+        }
+    }
+    if (!sleeping && (now - lastActivityMs) >= kSleepMs) {
+        display::setSleep(true);
+        sleeping = true;
+    }
+    // -------------------------------------------------------------------------
+
     handleEvent(ev);
 
     // Refresh running screen every second to update stats.
     static uint32_t lastStatRefresh = 0;
     if (g_view == View::MODULE_RUNNING) {
-        uint32_t now = millis();
         if (now - lastStatRefresh >= 1000) {
             lastStatRefresh = now;
             g_dirty = true;
