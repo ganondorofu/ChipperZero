@@ -297,7 +297,7 @@ async function connect() {
       const wifiCh = await service.getCharacteristic(WIFI_CFG_UUID);
       wifiCfgChar = wifiCh;
       const val = await wifiCh.readValue();
-      $('wifi-status').textContent = new TextDecoder().decode(val);
+      $('wifi-status').innerHTML = new TextDecoder().decode(val).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/\n/g,'<br>');
       log('WiFi char OK', 'ok');
     } catch(e) { log(`WiFi char: ${e.message}`, 'err'); }
 
@@ -413,7 +413,7 @@ async function wifiApply() {
     setTimeout(async () => {
       try {
         const val = await wifiCfgChar.readValue();
-        $('wifi-status').textContent = new TextDecoder().decode(val);
+        $('wifi-status').innerHTML = new TextDecoder().decode(val).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/\n/g,'<br>');
       } catch(e) {}
     }, 2500);
   } catch(e) {

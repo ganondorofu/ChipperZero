@@ -468,6 +468,8 @@ enum class KbAction : uint8_t { NONE, BEACON_CUSTOM, MJ_CUSTOM };
 View             g_view     = View::LIST;
 IModule*         g_active   = nullptr;
 bool             g_dirty    = true;
+volatile IModule* g_pendingLaunch = nullptr;
+volatile bool     g_pendingStop   = false;
 keyboard::State  g_kbState;
 KbAction         g_kbAction = KbAction::NONE;
 
@@ -666,6 +668,18 @@ void begin() {
 }
 
 void update() {
+    // Process pending HTTP commands before reading encoder input.
+    if (g_pendingStop) {
+        g_pendingStop = false;
+        stopActiveModule();
+    }
+    if (g_pendingLaunch) {
+        IModule* m = const_cast<IModule*>(g_pendingLaunch);
+        g_pendingLaunch = nullptr;
+        stopActiveModule();
+        launchModule(m);
+    }
+
     encoder::InputEvent ev = encoder::tick();
 
     // ---- Display sleep management -------------------------------------------
@@ -710,5 +724,7 @@ void update() {
 }
 
 IModule* activeModule() { return g_active; }
+void requestLaunch(IModule* m) { g_pendingLaunch = m; }
+void requestStop()              { g_pendingStop = true; }
 
 }  // namespace menu

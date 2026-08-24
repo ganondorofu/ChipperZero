@@ -17,6 +17,7 @@
 #include "src/modules/nrf_ble_spam.h"
 #include "src/modules/storage.h"
 #include "src/modules/wifi_scan.h"
+#include "src/modules/wifi_manager.h"
 #include "src/ui/menu.h"
 
 // Shared VSPI mutex. NRF24L01 and SD both live on VSPI; every driver access
@@ -56,6 +57,7 @@ void setup() {
     g_ir.init();
     g_wifiScan.init();
     g_storage.init();
+    g_wifiManager.init();
     Serial.println("NRF24 init OK");
 
     menu::begin();
@@ -65,4 +67,5 @@ void setup() {
 void loop() {
     menu::update();
     display::flush();
+    g_wifiManager.handleClient();
 }

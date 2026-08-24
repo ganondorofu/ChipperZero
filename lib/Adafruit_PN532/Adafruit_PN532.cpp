@@ -1824,22 +1824,7 @@ void Adafruit_PN532::writecommand(uint8_t *cmd, uint8_t cmdlen) {
 bool Adafruit_PN532::felica_Poll(uint8_t sysH, uint8_t sysL,
                                  uint8_t *idm, uint8_t *pmm,
                                  uint16_t *systemCode) {
-  // InListPassiveTarget with BrTy=0x01 (FeliCa 212kbps) + SENSF_REQ
-  pn532_packetbuffer[0] = PN532_COMMAND_INLISTPASSIVETARGET;
-  pn532_packetbuffer[1] = 1;     // MaxTg
-  pn532_packetbuffer[2] = 0x01;  // BrTy: FeliCa 212 kbps
-  pn532_packetbuffer[3] = 0x06;  // SENSF_REQ length
-  pn532_packetbuffer[4] = 0x04;  // SENSF_REQ command code
-  pn532_packetbuffer[5] = 0x01;  // Request Code (request system code in response)
-  pn532_packetbuffer[6] = sysH;
-  pn532_packetbuffer[7] = sysL;
-  pn532_packetbuffer[8] = 0x00;  // TimeSlot = 0
-
-  if (!sendCommandCheckAck(pn532_packetbuffer, 9, 1000)) return false;
-  if (!waitready(1000)) return false;
-  readdata(pn532_packetbuffer, 32);
-
-  // Response layout in pn532_packetbuffer:
+  // Response layout in pn532_packetbuffer (after readdata, RDY byte already stripped):
   // [0..2]   = 00 00 FF (preamble)
   // [3]      = length
   // [4]      = ~length+1
@@ -1853,17 +1838,36 @@ bool Adafruit_PN532::felica_Poll(uint8_t sysH, uint8_t sysL,
   // [19..26] = PMm
   // [27..28] = System code (if Request Code = 01h)
 
-  if (pn532_packetbuffer[7] < 1)    return false;  // no target
-  if (pn532_packetbuffer[10] != 0x01) return false;  // not SENSF_RES
+  // Try 212 kbps (BrTy=0x01), then 424 kbps (BrTy=0x02)
+  static const uint8_t kBrTy[] = {0x01, 0x02};
+  for (uint8_t bi = 0; bi < 2; bi++) {
+    pn532_packetbuffer[0] = PN532_COMMAND_INLISTPASSIVETARGET;
+    pn532_packetbuffer[1] = 1;        // MaxTg
+    pn532_packetbuffer[2] = kBrTy[bi];
+    pn532_packetbuffer[3] = 0x06;     // SENSF_REQ length
+    pn532_packetbuffer[4] = 0x04;     // SENSF_REQ command code
+    pn532_packetbuffer[5] = 0x01;     // Request Code: include system code in response
+    pn532_packetbuffer[6] = sysH;
+    pn532_packetbuffer[7] = sysL;
+    pn532_packetbuffer[8] = 0x0F;     // TimeSlot = 15 (max slots, better for physical cards)
 
-  _inListedTag = pn532_packetbuffer[8];  // required for inDataExchange
+    if (!sendCommandCheckAck(pn532_packetbuffer, 9, 1000)) continue;
+    if (!waitready(1000)) continue;
+    readdata(pn532_packetbuffer, 32);
 
-  if (idm) memcpy(idm, pn532_packetbuffer + 11, 8);
-  if (pmm) memcpy(pmm, pn532_packetbuffer + 19, 8);
-  if (systemCode) {
-    *systemCode = ((uint16_t)pn532_packetbuffer[27] << 8) | pn532_packetbuffer[28];
+    if (pn532_packetbuffer[7] < 1)       continue;  // no target
+    if (pn532_packetbuffer[10] != 0x01)  continue;  // not SENSF_RES
+
+    _inListedTag = pn532_packetbuffer[8];  // required for inDataExchange
+
+    if (idm) memcpy(idm, pn532_packetbuffer + 11, 8);
+    if (pmm) memcpy(pmm, pn532_packetbuffer + 19, 8);
+    if (systemCode) {
+      *systemCode = ((uint16_t)pn532_packetbuffer[27] << 8) | pn532_packetbuffer[28];
+    }
+    return true;
   }
-  return true;
+  return false;
 }
 
 bool Adafruit_PN532::felica_ReadWithoutEncryption(const uint8_t *idm,

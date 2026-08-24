@@ -387,16 +387,18 @@ static void nfcSuicaTask(void* arg) {
 
         const char* cardName = felicaCardName(sysCode);
 
-        // Debug output
+        // Read SF balance (service 0x008B, block 0) — retry up to 3x, no printf between poll and read
+        uint8_t block[16] = {};
+        bool ok = false;
+        for (int attempt = 0; attempt < 3 && !ok; attempt++) {
+            ok = s_pn532.felica_ReadWithoutEncryption(idm, 0x008B, 0, block);
+            if (!ok && attempt < 2) vTaskDelay(pdMS_TO_TICKS(50));
+        }
+
         Serial.printf("[NFC] SysCode: %04X  Card: %s\n", sysCode, cardName);
         Serial.printf("[NFC] IDm: %02X%02X%02X%02X%02X%02X%02X%02X\n",
                       idm[0], idm[1], idm[2], idm[3],
                       idm[4], idm[5], idm[6], idm[7]);
-
-        // Try to read SF balance (service 0x008B, block 0)
-        uint8_t block[16] = {};
-        bool ok = s_pn532.felica_ReadWithoutEncryption(idm, 0x008B, 0, block);
-
         if (ok) {
             Serial.print("[NFC] Block0(0x008B): ");
             for (int i = 0; i < 16; i++) Serial.printf("%02X ", block[i]);

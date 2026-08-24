@@ -80,7 +80,6 @@ static void wifiCfgUpdateValue() {
     if (!g_wifiCfgChar) return;
     char buf[48];
     g_wifiManager.fillStats(buf, sizeof(buf));
-    for (char* p = buf; *p; p++) if (*p == '\n') *p = ',';
     g_wifiCfgChar->setValue(buf);
 }
 
